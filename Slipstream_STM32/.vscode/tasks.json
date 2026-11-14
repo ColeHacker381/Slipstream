@@ -36,6 +36,26 @@
             }
         },
         {
+            "label": "STM32: Flash and Run",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-lc",
+                "PROGRAMMER=$(find \"$HOME/.local/share/stm32cube/bundles/programmer\" -type f -name STM32_Programmer_CLI | sort -V | tail -1) && echo \"Using $PROGRAMMER\" && \"$PROGRAMMER\" -c port=SWD -w \"${workspaceFolder}/build/Debug/Slipstream_STM32.elf\" -v -rst"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Build Debug",
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
             "label": "STM32: Configure Release",
             "type": "shell",
             "command": "cube-cmake",
