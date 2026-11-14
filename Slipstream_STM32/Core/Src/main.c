@@ -18,11 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <string.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,6 +41,10 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
+I2S_HandleTypeDef hi2s2;
+
 UART_HandleTypeDef huart3;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
@@ -54,12 +58,120 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_I2C1_Init(void);
+static void MX_I2S2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static HAL_StatusTypeDef wm8960_write(
+    uint8_t reg,
+    uint16_t value
+);
+
+
+#define WM8960_ADDR (0x1A << 1)
+
+
+static HAL_StatusTypeDef wm8960_headphone_init(void)
+{
+    HAL_StatusTypeDef status;
+
+    // Use a unique macro name to avoid CMSIS conflicts.
+    #define WM8960_WRITE_CHECKED(reg, value)       \
+        do {                                       \
+            status = wm8960_write((reg), (value));  \
+            if (status != HAL_OK) return status;   \
+        } while (0)
+
+    // Reset codec
+    WM8960_WRITE_CHECKED(0x0F, 0x000);
+    HAL_Delay(10);
+
+    // Enable VREF and VMID
+    WM8960_WRITE_CHECKED(0x19, 0x0C0);
+    HAL_Delay(50);
+
+    // 24 MHz oscillator -> PLL (48 kHz family)
+    WM8960_WRITE_CHECKED(0x34, 0x038);
+    WM8960_WRITE_CHECKED(0x35, 0x031);
+    WM8960_WRITE_CHECKED(0x36, 0x026);
+    WM8960_WRITE_CHECKED(0x37, 0x0E8);
+
+    // Clock configuration
+    WM8960_WRITE_CHECKED(0x04, 0x005);
+    WM8960_WRITE_CHECKED(0x08, 0x1C4);
+
+    // I2S, 16-bit, codec slave mode
+    WM8960_WRITE_CHECKED(0x07, 0x002);
+
+    // Left and right DAC output mixers
+    WM8960_WRITE_CHECKED(0x22, 0x150);
+    WM8960_WRITE_CHECKED(0x25, 0x150);
+
+    // Enable output mixers
+    WM8960_WRITE_CHECKED(0x2F, 0x00C);
+
+    // Enable DACs, headphone drivers, PLL
+    WM8960_WRITE_CHECKED(0x1A, 0x1E3);
+
+    // Unmute DAC
+    WM8960_WRITE_CHECKED(0x05, 0x000);
+
+    // Headphone volume
+    WM8960_WRITE_CHECKED(0x02, 0x165);
+    WM8960_WRITE_CHECKED(0x03, 0x165);
+
+    #undef WM8960_WRITE_CHECKED
+
+    return HAL_OK;
+}
+
+static const int16_t sine_1khz[48] = {
+       0,   457,   906,  1339,  1750,  2131,
+    2475,  2777,  3031,  3234,  3381,  3470,
+    3500,  3470,  3381,  3234,  3031,  2777,
+    2475,  2131,  1750,  1339,   906,   457,
+       0,  -457,  -906, -1339, -1750, -2131,
+   -2475, -2777, -3031, -3234, -3381, -3470,
+   -3500, -3470, -3381, -3234, -3031, -2777,
+   -2475, -2131, -1750, -1339,  -906,  -457
+};
+
+static int16_t audio_buffer[48 * 2];
+
+static void generate_sine_buffer(void)
+{
+    for (int i = 0; i < 48; i++)
+    {
+        audio_buffer[i * 2] = sine_1khz[i];
+        audio_buffer[i * 2 + 1] = sine_1khz[i];
+    }
+}
+
+static HAL_StatusTypeDef wm8960_write(
+    uint8_t reg,
+    uint16_t value)
+{
+    uint8_t data[2];
+
+    value &= 0x01FF;
+
+    data[0] = (reg << 1) | (value >> 8);
+    data[1] = value & 0xFF;
+
+    return HAL_I2C_Master_Transmit(
+        &hi2c1,
+        WM8960_ADDR,
+        data,
+        2,
+        100
+    );
+}
+
 
 /* USER CODE END 0 */
 
@@ -94,15 +206,44 @@ int main(void)
   MX_GPIO_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
+  MX_I2C1_Init();
+  MX_I2S2_Init();
   /* USER CODE BEGIN 2 */
 
-  const char *message =
-      "\r\n[Slipstream] S0 boot successful!\r\n";
+  const char *boot_msg =
+      "\r\n[Slipstream] Starting S2 audio test\r\n";
 
   HAL_UART_Transmit(&huart3,
-                    (uint8_t *)message,
-                    strlen(message),
+                    (uint8_t*)boot_msg,
+                    strlen(boot_msg),
                     HAL_MAX_DELAY);
+
+  // Configure WM8960
+  HAL_StatusTypeDef codec_status =
+      wm8960_headphone_init();
+
+  if (codec_status != HAL_OK)
+  {
+      const char *error_msg =
+          "[S2] WM8960 initialization FAILED\r\n";
+
+      HAL_UART_Transmit(&huart3,
+                        (uint8_t*)error_msg,
+                        strlen(error_msg),
+                        HAL_MAX_DELAY);
+
+      Error_Handler();
+  }
+
+  const char *ready_msg =
+      "[S2] WM8960 configured; starting tone\r\n";
+
+  HAL_UART_Transmit(&huart3,
+                    (uint8_t*)ready_msg,
+                    strlen(ready_msg),
+                    HAL_MAX_DELAY);
+
+  generate_sine_buffer();
 
   /* USER CODE END 2 */
 
@@ -114,15 +255,27 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    const char *heartbeat =
-        "[Slipstream] S0 heartbeat\r\n";
 
-    HAL_UART_Transmit(&huart3,
-                      (uint8_t *)heartbeat,
-                      strlen(heartbeat),
-                      HAL_MAX_DELAY);
+    HAL_StatusTypeDef result = HAL_I2S_Transmit(
+        &hi2s2,
+        (uint16_t*)audio_buffer,
+        96,
+        HAL_MAX_DELAY
+    );
 
-    HAL_Delay(1000);
+    if (result != HAL_OK)
+    {
+        const char *msg =
+            "[S2] I2S transmission failed\r\n";
+
+        HAL_UART_Transmit(&huart3,
+                          (uint8_t*)msg,
+                          strlen(msg),
+                          HAL_MAX_DELAY);
+
+        Error_Handler();
+    }
+
 
   }
   /* USER CODE END 3 */
@@ -149,10 +302,10 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 384;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
-  RCC_OscInitStruct.PLL.PLLQ = 8;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 72;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 3;
   RCC_OscInitStruct.PLL.PLLR = 2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -168,10 +321,78 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief I2S2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2S2_Init(void)
+{
+
+  /* USER CODE BEGIN I2S2_Init 0 */
+
+  /* USER CODE END I2S2_Init 0 */
+
+  /* USER CODE BEGIN I2S2_Init 1 */
+
+  /* USER CODE END I2S2_Init 1 */
+  hi2s2.Instance = SPI2;
+  hi2s2.Init.Mode = I2S_MODE_MASTER_TX;
+  hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
+  hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
+  hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
+  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_48K;
+  hi2s2.Init.CPOL = I2S_CPOL_LOW;
+  hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
+  hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
+  if (HAL_I2S_Init(&hi2s2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2S2_Init 2 */
+
+  /* USER CODE END I2S2_Init 2 */
+
 }
 
 /**
