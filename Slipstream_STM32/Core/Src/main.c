@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "arm_math.h"
+#include "slipstream_s8.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,6 +88,7 @@ static void MX_I2S2_Init(void);
  * 2 = original FIR resampler + original HPF/LPF
  */
 #define S7_MODE 2
+#define S8_ENABLED 1 /* 0 = S7 bypass, 1 = ESP32 S8 noise suppressor */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -288,6 +290,11 @@ static float32_t s7_decimated_16k[S7_VOICE_SAMPLES];
 static float32_t s7_playback_48k[S5_FRAMES_PER_HALF];
 
 static int16_t s7_voice_16k[S7_VOICE_SAMPLES];
+#if S8_ENABLED
+static int16_t s8_clean_16k[S7_VOICE_SAMPLES];
+static uint32_t s8_last_cycles = 0U;
+static uint32_t s8_max_cycles = 0U;
+#endif
 
 /*
  * Keep a full stereo output staging block.
@@ -481,6 +488,16 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     }
 #endif
 
+#if S8_ENABLED && S7_MODE == 2
+    /* ESP32 H8: suppress after HPF/LPF, before upsampling. */
+    uint32_t ns_start = DWT->CYCCNT;
+    s8_process(s7_voice_16k, s8_clean_16k);
+    uint32_t ns_elapsed = DWT->CYCCNT - ns_start;
+    s8_last_cycles = ns_elapsed;
+    if (ns_elapsed > s8_max_cycles) s8_max_cycles = ns_elapsed;
+    memcpy(s7_voice_16k, s8_clean_16k, sizeof(s7_voice_16k));
+#endif
+
     /*
      * Match ESP32's 16-bit voice input into
      * the interpolation stage.
@@ -669,6 +686,15 @@ int main(void)
       Error_Handler();
   }
 
+#if S8_ENABLED
+  if (!s8_init())
+  {
+      const char *msg = "[S8] FFT noise suppressor init failed\r\n";
+      HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), 100);
+      Error_Handler();
+  }
+#endif
+
   /* Initialize ARM CMSIS-DSP filters */
   if (!s7_resampler_init())
   {
@@ -835,15 +861,25 @@ int main(void)
             );
         }
 
-        char msg[220];
+        uint32_t ns_us = 0U, ns_max_us = 0U, ns_ready = 0U;
+#if S8_ENABLED
+        if (SystemCoreClock != 0U)
+        {
+            ns_us = (uint32_t)((uint64_t)s8_last_cycles * 1000000ULL / SystemCoreClock);
+            ns_max_us = (uint32_t)((uint64_t)s8_max_cycles * 1000000ULL / SystemCoreClock);
+        }
+        ns_ready = s8_noise_ready();
+#endif
+        char msg[280];
 
         int len = snprintf(
             msg,
             sizeof(msg),
-            "[S7] Mode=%d IRQ/s=%lu Voice/s=%lu "
+            "[S8] Enabled=%d Mode=%d IRQ/s=%lu Voice/s=%lu "
             "In=%lu Out=%lu "
-            "Proc=%luus Max=%luus "
+            "Proc=%luus Max=%luus NS=%luus NSMax=%luus Ready=%lu "
             "Missed=%lu Late=%lu DMAErr=%lu\r\n",
+            S8_ENABLED,
             S7_MODE,
             (unsigned long)irqs_per_second,
             (unsigned long)voice_per_second,
@@ -851,6 +887,9 @@ int main(void)
             (unsigned long)s7_output_peak,
             (unsigned long)processing_us,
             (unsigned long)max_processing_us,
+            (unsigned long)ns_us,
+            (unsigned long)ns_max_us,
+            (unsigned long)ns_ready,
             (unsigned long)s7_missed_blocks,
             (unsigned long)s7_deadline_misses,
             (unsigned long)s5_dma_errors
@@ -875,6 +914,9 @@ int main(void)
         s7_input_peak = 0;
         s7_output_peak = 0;
         s7_max_cycles = 0;
+#if S8_ENABLED
+        s8_max_cycles = 0;
+#endif
     }
 
     /* Continue looping immediately. */
