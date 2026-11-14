@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "/home/colehacker/Projects/Slipstream/dsp_hardware/Slipstream_STM32/Drivers/CMSIS/NN",
+    "cmake.sourceDirectory": "${workspaceFolder}",
     "cmake.cmakePath": "cube-cmake",
     "cmake.configureArgs": [
         "-DCMAKE_COMMAND=cube-cmake"
@@ -7,6 +7,9 @@
     "cmake.preferredGenerators": [
         "Ninja"
     ],
+    "cmake.useCMakePresets": "always",
+    "cmake.configureOnOpen": true,
+
     "stm32cube-ide-clangd.path": "cube",
     "stm32cube-ide-clangd.arguments": [
         "starm-clangd",
