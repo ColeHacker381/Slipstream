@@ -1,0 +1,16 @@
+{
+    "idf.extensionActivationMode": "always",
+    "idf.flashType": "UART",
+    "cmake.configureOnOpen": false,
+    "cmake.configureOnEdit": false,
+    "cmake.automaticReconfigure": false,
+    "cmake.autoSelectActiveFolder": false,
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "clangd.arguments": [
+        "--background-index",
+        "--query-driver=**",
+        "--compile-commands-dir=${workspaceFolder}/build"
+    ],
+    "idf.currentSetup": "/home/colehacker/.espressif/v6.1/esp-idf",
+    "idf.port": "/dev/ttyUSB0"
+}
