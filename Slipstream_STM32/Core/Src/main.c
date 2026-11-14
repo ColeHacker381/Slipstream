@@ -617,7 +617,11 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART3_UART_Init();
+  /* The MCU's OTG-FS clock is not 48 MHz at 100 MHz SYSCLK.
+     ST-LINK SWD and its USART3 virtual COM port are independent. */
+#if !defined(SLIPSTREAM_100MHZ)
   MX_USB_OTG_FS_PCD_Init();
+#endif
   MX_I2C1_Init();
   MX_I2S2_Init();
   /* USER CODE BEGIN 2 */
@@ -902,9 +906,20 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
+  /* Keep 72 MHz Debug unchanged; use 100 MHz only in Performance100. */
+#if defined(SLIPSTREAM_100MHZ)
+  RCC_OscInitStruct.PLL.PLLN = 100;
+#else
   RCC_OscInitStruct.PLL.PLLN = 72;
+#endif
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  /* 100 MHz PLL: VCO=200 MHz, PLLQ=4 gives 50 MHz (NOT USB-valid).
+     Target MCU OTG-FS is intentionally not initialized in this build. */
+#if defined(SLIPSTREAM_100MHZ)
+  RCC_OscInitStruct.PLL.PLLQ = 4;
+#else
   RCC_OscInitStruct.PLL.PLLQ = 3;
+#endif
   RCC_OscInitStruct.PLL.PLLR = 2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -920,7 +935,13 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
+  /* RM0402: at VDD=3.3 V, 100 MHz requires 3 Flash wait states;
+     72 MHz remains at the existing 2 wait states. */
+#if defined(SLIPSTREAM_100MHZ)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+#else
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+#endif
   {
     Error_Handler();
   }

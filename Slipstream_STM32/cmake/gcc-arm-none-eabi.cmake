@@ -34,6 +34,16 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fdata-sections -ffunction-sections -f
 
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g3")
 set(CMAKE_C_FLAGS_RELEASE "-Os -g0")
+
+# S7 fair benchmarks: same DSP code, optimized for Cortex-M4F.
+# Performance72 retains the generated 72 MHz clock and USB configuration.
+# Performance100 switches to a 100 MHz core and leaves target USB OTG FS off.
+# No fast-math flags: preserve the baseline floating-point behavior.
+set(CMAKE_C_FLAGS_PERFORMANCE72 "-O3 -g3")
+set(CMAKE_C_FLAGS_PERFORMANCE100 "-O3 -g3 -DSLIPSTREAM_100MHZ=1")
+set(CMAKE_CXX_FLAGS_PERFORMANCE72 "-O3 -g3")
+set(CMAKE_CXX_FLAGS_PERFORMANCE100 "-O3 -g3 -DSLIPSTREAM_100MHZ=1")
+
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g3")
 set(CMAKE_CXX_FLAGS_RELEASE "-Os -g0")
 
