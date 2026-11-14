@@ -44,6 +44,8 @@
 I2C_HandleTypeDef hi2c1;
 
 I2S_HandleTypeDef hi2s2;
+DMA_HandleTypeDef hdma_spi2_tx;
+DMA_HandleTypeDef hdma_i2s2_ext_rx;
 
 UART_HandleTypeDef huart3;
 
@@ -56,6 +58,7 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_I2C1_Init(void);
@@ -67,101 +70,57 @@ static void MX_I2S2_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static HAL_StatusTypeDef wm8960_write(
-    uint8_t reg,
-    uint16_t value
-);
+/* USER CODE BEGIN 0 */
 
+/*
+ * SLIPSTREAM S5
+ *
+ * 48 kHz stereo, signed 16-bit PCM
+ * 10 ms per DMA half
+ * 20 ms total circular DMA buffer
+ *
+ * Microphone: left ADC channel
+ * Playback: both DAC channels
+ */
 
-#define WM8960_ADDR (0x1A << 1)
+#define WM8960_ADDR         (0x1A << 1)
 
+#define S5_FRAMES_PER_HALF  480U
+#define S5_CHANNELS         2U
+#define S5_HALF_SAMPLES     (S5_FRAMES_PER_HALF * S5_CHANNELS)
+#define S5_DMA_SAMPLES      (S5_HALF_SAMPLES * 2U)
 
-static HAL_StatusTypeDef wm8960_headphone_init(void)
-{
-    HAL_StatusTypeDef status;
+#define S5_LOOPBACK_DIVISOR 1
 
-    // Use a unique macro name to avoid CMSIS conflicts.
-    #define WM8960_WRITE_CHECKED(reg, value)       \
-        do {                                       \
-            status = wm8960_write((reg), (value));  \
-            if (status != HAL_OK) return status;   \
-        } while (0)
+static uint16_t s5_tx[S5_DMA_SAMPLES] = {0};
+static uint16_t s5_rx[S5_DMA_SAMPLES] = {0};
 
-    // Reset codec
-    WM8960_WRITE_CHECKED(0x0F, 0x000);
-    HAL_Delay(10);
+/* Updated from DMA interrupt callbacks. */
+static volatile uint32_t s5_half_count = 0;
+static volatile uint32_t s5_full_count = 0;
+static volatile uint32_t s5_peak = 0;
+static volatile uint32_t s5_dma_errors = 0;
+static volatile uint32_t s5_last_error = 0;
 
-    // Enable VREF and VMID
-    WM8960_WRITE_CHECKED(0x19, 0x0C0);
-    HAL_Delay(50);
-
-    // 24 MHz oscillator -> PLL (48 kHz family)
-    WM8960_WRITE_CHECKED(0x34, 0x038);
-    WM8960_WRITE_CHECKED(0x35, 0x031);
-    WM8960_WRITE_CHECKED(0x36, 0x026);
-    WM8960_WRITE_CHECKED(0x37, 0x0E8);
-
-    // Clock configuration
-    WM8960_WRITE_CHECKED(0x04, 0x005);
-    WM8960_WRITE_CHECKED(0x08, 0x1C4);
-
-    // I2S, 16-bit, codec slave mode
-    WM8960_WRITE_CHECKED(0x07, 0x002);
-
-    // Left and right DAC output mixers
-    WM8960_WRITE_CHECKED(0x22, 0x150);
-    WM8960_WRITE_CHECKED(0x25, 0x150);
-
-    // Enable output mixers
-    WM8960_WRITE_CHECKED(0x2F, 0x00C);
-
-    // Enable DACs, headphone drivers, PLL
-    WM8960_WRITE_CHECKED(0x1A, 0x1E3);
-
-    // Unmute DAC
-    WM8960_WRITE_CHECKED(0x05, 0x000);
-
-    // Headphone volume
-    WM8960_WRITE_CHECKED(0x02, 0x165);
-    WM8960_WRITE_CHECKED(0x03, 0x165);
-
-    #undef WM8960_WRITE_CHECKED
-
-    return HAL_OK;
-}
-
-static const int16_t sine_1khz[48] = {
-       0,   457,   906,  1339,  1750,  2131,
-    2475,  2777,  3031,  3234,  3381,  3470,
-    3500,  3470,  3381,  3234,  3031,  2777,
-    2475,  2131,  1750,  1339,   906,   457,
-       0,  -457,  -906, -1339, -1750, -2131,
-   -2475, -2777, -3031, -3234, -3381, -3470,
-   -3500, -3470, -3381, -3234, -3031, -2777,
-   -2475, -2131, -1750, -1339,  -906,  -457
-};
-
-static int16_t audio_buffer[48 * 2];
-
-static void generate_sine_buffer(void)
-{
-    for (int i = 0; i < 48; i++)
-    {
-        audio_buffer[i * 2] = sine_1khz[i];
-        audio_buffer[i * 2 + 1] = sine_1khz[i];
-    }
-}
-
+/*
+ * WM8960 register writes.
+ *
+ * Registers contain 9-bit values.
+ * The codec uses a 7-bit I2C address.
+ */
 static HAL_StatusTypeDef wm8960_write(
     uint8_t reg,
     uint16_t value)
 {
     uint8_t data[2];
 
-    value &= 0x01FF;
+    value &= 0x01FFU;
 
-    data[0] = (reg << 1) | (value >> 8);
-    data[1] = value & 0xFF;
+    data[0] = (uint8_t)(
+        (reg << 1) | ((value >> 8) & 1U)
+    );
+
+    data[1] = (uint8_t)(value & 0xFFU);
 
     return HAL_I2C_Master_Transmit(
         &hi2c1,
@@ -172,6 +131,146 @@ static HAL_StatusTypeDef wm8960_write(
     );
 }
 
+/*
+ * Preserves the headphone setup from S2/S3.
+ */
+static HAL_StatusTypeDef wm8960_headphone_init(void)
+{
+    HAL_StatusTypeDef status;
+
+    #define WM_WRITE(reg, value)                   \
+        do {                                       \
+            status = wm8960_write(reg, value);     \
+            if (status != HAL_OK) return status;   \
+        } while (0)
+
+    /* Reset codec */
+    WM_WRITE(0x0F, 0x000);
+    HAL_Delay(10);
+
+    /* VREF + VMID */
+    WM_WRITE(0x19, 0x0C0);
+    HAL_Delay(50);
+
+    /* Existing 48 kHz codec PLL settings */
+    WM_WRITE(0x34, 0x038);
+    WM_WRITE(0x35, 0x031);
+    WM_WRITE(0x36, 0x026);
+    WM_WRITE(0x37, 0x0E8);
+
+    /* Clocking */
+    WM_WRITE(0x04, 0x005);
+    WM_WRITE(0x08, 0x1C4);
+
+    /* I2S, 16-bit, codec slave */
+    WM_WRITE(0x07, 0x002);
+
+    /* DAC output mixers */
+    WM_WRITE(0x22, 0x150);
+    WM_WRITE(0x25, 0x150);
+    WM_WRITE(0x2F, 0x00C);
+
+    /* DACs, headphone drivers, PLL */
+    WM_WRITE(0x1A, 0x1E3);
+
+    /* DAC unmute */
+    WM_WRITE(0x05, 0x000);
+
+    /* Conservative headphone volume */
+    WM_WRITE(0x02, 0x165);
+    WM_WRITE(0x03, 0x165);
+
+    #undef WM_WRITE
+
+    return HAL_OK;
+}
+
+/*
+ * Adds microphone functionality without resetting
+ * the headphone configuration.
+ */
+static HAL_StatusTypeDef wm8960_enable_microphone(void)
+{
+    HAL_StatusTypeDef status;
+
+    #define MIC_WRITE(reg, value)                  \
+        do {                                       \
+            status = wm8960_write(reg, value);     \
+            if (status != HAL_OK) return status;   \
+        } while (0)
+
+    /* Left analog input + ADC + mic bias */
+    MIC_WRITE(0x19, 0x0EA);
+    HAL_Delay(50);
+
+    /* Left microphone PGA + output mixers */
+    MIC_WRITE(0x2F, 0x02C);
+
+    /* Microphone bias */
+    MIC_WRITE(0x30, 0x001);
+
+    /* Microphone PGA */
+    MIC_WRITE(0x00, 0x12F);
+
+    /* Microphone signal routing */
+    MIC_WRITE(0x20, 0x148);
+
+    /* ADC digital volume */
+    MIC_WRITE(0x15, 0x1C3);
+
+    #undef MIC_WRITE
+
+    return HAL_OK;
+}
+
+/*
+ * Process one completed 10 ms DMA half.
+ *
+ * The RX DMA has just finished writing this region.
+ * The TX DMA has moved beyond this region.
+ *
+ * We prepare it for the next DMA cycle.
+ *
+ * No UART, delays, or blocking HAL calls here.
+ */
+static void s5_process_half(uint32_t offset)
+{
+    uint32_t peak = 0;
+
+    for (uint32_t i = 0; i < S5_FRAMES_PER_HALF; i++)
+    {
+        uint32_t index = offset + (i * 2U);
+
+        /* Capture the left microphone sample. */
+        int32_t mic = (int16_t)s5_rx[index];
+
+        /* Initial low-gain loopback. */
+        int16_t output = (int16_t)(
+            mic / S5_LOOPBACK_DIVISOR
+        );
+
+        /* Copy microphone to both headphones. */
+        s5_tx[index] = (uint16_t)output;
+        s5_tx[index + 1U] = (uint16_t)output;
+
+        /* Capture microphone peak for diagnostics. */
+        uint32_t magnitude = (mic < 0)
+            ? (uint32_t)(-mic)
+            : (uint32_t)mic;
+
+        if (magnitude > peak)
+        {
+            peak = magnitude;
+        }
+    }
+
+    if (peak > s5_peak)
+    {
+        s5_peak = peak;
+    }
+}
+
+/* USER CODE END 0 */
 
 /* USER CODE END 0 */
 
@@ -204,6 +303,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_I2C1_Init();
@@ -211,39 +311,109 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   const char *boot_msg =
-      "\r\n[Slipstream] Starting S2 audio test\r\n";
+      "\r\n[Slipstream] Starting S5 DMA audio\r\n";
 
-  HAL_UART_Transmit(&huart3,
-                    (uint8_t*)boot_msg,
-                    strlen(boot_msg),
-                    HAL_MAX_DELAY);
+  HAL_UART_Transmit(
+      &huart3,
+      (uint8_t *)boot_msg,
+      strlen(boot_msg),
+      HAL_MAX_DELAY
+  );
 
-  // Configure WM8960
-  HAL_StatusTypeDef codec_status =
-      wm8960_headphone_init();
+  /* Initialize headphone audio path. */
+  HAL_StatusTypeDef status = wm8960_headphone_init();
 
-  if (codec_status != HAL_OK)
+  if (status != HAL_OK)
   {
-      const char *error_msg =
-          "[S2] WM8960 initialization FAILED\r\n";
+      const char *msg =
+          "[S5] ERROR: WM8960 headphone init\r\n";
 
-      HAL_UART_Transmit(&huart3,
-                        (uint8_t*)error_msg,
-                        strlen(error_msg),
-                        HAL_MAX_DELAY);
+      HAL_UART_Transmit(
+          &huart3,
+          (uint8_t *)msg,
+          strlen(msg),
+          HAL_MAX_DELAY
+      );
+
+      Error_Handler();
+  }
+
+  /* Enable microphone audio path. */
+  status = wm8960_enable_microphone();
+
+  if (status != HAL_OK)
+  {
+      const char *msg =
+          "[S5] ERROR: WM8960 microphone init\r\n";
+
+      HAL_UART_Transmit(
+          &huart3,
+          (uint8_t *)msg,
+          strlen(msg),
+          HAL_MAX_DELAY
+      );
+
+      Error_Handler();
+  }
+
+  /* Verify that CubeMX linked both DMA handles. */
+  if (hi2s2.hdmatx == NULL || hi2s2.hdmarx == NULL)
+  {
+      const char *msg =
+          "[S5] ERROR: I2S DMA handles missing\r\n";
+
+      HAL_UART_Transmit(
+          &huart3,
+          (uint8_t *)msg,
+          strlen(msg),
+          HAL_MAX_DELAY
+      );
+
+      Error_Handler();
+  }
+
+  /* Start continuous full-duplex audio transfer. */
+  status = HAL_I2SEx_TransmitReceive_DMA(
+      &hi2s2,
+      s5_tx,
+      s5_rx,
+      S5_DMA_SAMPLES
+  );
+
+  if (status != HAL_OK)
+  {
+      char msg[120];
+
+      int len = snprintf(
+          msg,
+          sizeof(msg),
+          "[S5] DMA start failed: HAL=%d I2S=0x%08lX\r\n",
+          (int)status,
+          (unsigned long)hi2s2.ErrorCode
+      );
+
+      if (len > 0)
+      {
+          HAL_UART_Transmit(
+              &huart3,
+              (uint8_t *)msg,
+              (uint16_t)len,
+              HAL_MAX_DELAY
+          );
+      }
 
       Error_Handler();
   }
 
   const char *ready_msg =
-      "[S2] WM8960 configured; starting tone\r\n";
+      "[S5] DMA started; circular loopback active\r\n";
 
-  HAL_UART_Transmit(&huart3,
-                    (uint8_t*)ready_msg,
-                    strlen(ready_msg),
-                    HAL_MAX_DELAY);
-
-  generate_sine_buffer();
+  HAL_UART_Transmit(
+      &huart3,
+      (uint8_t *)ready_msg,
+      strlen(ready_msg),
+      HAL_MAX_DELAY
+  );
 
   /* USER CODE END 2 */
 
@@ -255,27 +425,70 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+    static uint32_t last_report = 0;
+    static uint32_t previous_blocks = 0;
 
-    HAL_StatusTypeDef result = HAL_I2S_Transmit(
-        &hi2s2,
-        (uint16_t*)audio_buffer,
-        96,
-        HAL_MAX_DELAY
-    );
+    uint32_t now = HAL_GetTick();
 
-    if (result != HAL_OK)
+    if ((uint32_t)(now - last_report) >= 1000U)
     {
-        const char *msg =
-            "[S2] I2S transmission failed\r\n";
+        last_report = now;
 
-        HAL_UART_Transmit(&huart3,
-                          (uint8_t*)msg,
-                          strlen(msg),
-                          HAL_MAX_DELAY);
+        uint32_t half_count = s5_half_count;
+        uint32_t full_count = s5_full_count;
+        uint32_t peak = s5_peak;
+        uint32_t errors = s5_dma_errors;
+        uint32_t error_code = s5_last_error;
 
-        Error_Handler();
+        uint32_t total_blocks = half_count + full_count;
+        uint32_t blocks_per_second =
+            total_blocks - previous_blocks;
+
+        previous_blocks = total_blocks;
+        s5_peak = 0;
+
+        char msg[180];
+
+        int len = snprintf(
+            msg,
+            sizeof(msg),
+            "[S5] Blocks/s=%lu Peak=%lu "
+            "Half=%lu Full=%lu Errors=%lu "
+            "LastError=0x%08lX\r\n",
+            (unsigned long)blocks_per_second,
+            (unsigned long)peak,
+            (unsigned long)half_count,
+            (unsigned long)full_count,
+            (unsigned long)errors,
+            (unsigned long)error_code
+        );
+
+        if (len > 0)
+        {
+            HAL_UART_Transmit(
+                &huart3,
+                (uint8_t *)msg,
+                (uint16_t)((len < (int)sizeof(msg))
+                    ? len : (int)sizeof(msg) - 1),
+                100
+            );
+        }
+
+        if (blocks_per_second == 0U)
+        {
+            const char *warning =
+                "[S5] WARNING: No DMA progress\r\n";
+
+            HAL_UART_Transmit(
+                &huart3,
+                (uint8_t *)warning,
+                strlen(warning),
+                100
+            );
+        }
     }
 
+    HAL_Delay(10);
 
   }
   /* USER CODE END 3 */
@@ -384,7 +597,7 @@ static void MX_I2S2_Init(void)
   hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_48K;
   hi2s2.Init.CPOL = I2S_CPOL_LOW;
   hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
-  hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
+  hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_ENABLE;
   if (HAL_I2S_Init(&hi2s2) != HAL_OK)
   {
     Error_Handler();
@@ -465,6 +678,25 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
+  /* DMA1_Stream4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -522,6 +754,58 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/*
+ * The RX DMA completed the first 10 ms.
+ * Process the first half while DMA advances
+ * through the second half.
+ */
+void HAL_I2SEx_TxRxHalfCpltCallback(
+    I2S_HandleTypeDef *hi2s)
+{
+    if (hi2s->Instance != SPI2)
+    {
+        return;
+    }
+
+    s5_process_half(0U);
+
+    s5_half_count++;
+}
+
+/*
+ * The RX DMA completed the second 10 ms.
+ * Process the second half while DMA
+ * wraps around to the first half.
+ */
+void HAL_I2SEx_TxRxCpltCallback(
+    I2S_HandleTypeDef *hi2s)
+{
+    if (hi2s->Instance != SPI2)
+    {
+        return;
+    }
+
+    s5_process_half(S5_HALF_SAMPLES);
+
+    s5_full_count++;
+}
+
+/*
+ * Record hardware errors.
+ * Never print to UART from an ISR.
+ */
+void HAL_I2S_ErrorCallback(
+    I2S_HandleTypeDef *hi2s)
+{
+    if (hi2s->Instance != SPI2)
+    {
+        return;
+    }
+
+    s5_dma_errors++;
+    s5_last_error = hi2s->ErrorCode;
+}
 
 /* USER CODE END 4 */
 
