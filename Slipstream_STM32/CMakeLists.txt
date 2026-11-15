@@ -88,6 +88,10 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 # S13 genuine libopus is an explicit external ARM source/static-library input.
 # No ESP32 prebuilt library is linked and no fake codec fallback is provided.
 option(S13_OPUS_BENCHMARK "Run real Opus startup benchmark before I2S DMA" OFF)
+set(S13_OPUS_COMPLEXITY 5 CACHE STRING "Opus encoder complexity for benchmarking (0..10)")
+if(S13_OPUS_COMPLEXITY LESS 0 OR S13_OPUS_COMPLEXITY GREATER 10)
+    message(FATAL_ERROR "S13_OPUS_COMPLEXITY must be between 0 and 10")
+endif()
 set(S13_OPUS_INCLUDE_DIR "" CACHE PATH "ARM-compatible libopus include directory containing opus.h")
 set(S13_OPUS_LIBRARY "" CACHE FILEPATH "ARM Cortex-M4F libopus static archive (.a)")
 if(S13_OPUS_BENCHMARK)
@@ -101,7 +105,8 @@ if(S13_OPUS_BENCHMARK)
         ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s13_opus_bench.c)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         "${S13_OPUS_INCLUDE_DIR}")
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S13_OPUS_BENCHMARK=1)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        S13_OPUS_BENCHMARK=1 S13_OPUS_COMPLEXITY=${S13_OPUS_COMPLEXITY})
     target_link_libraries(${CMAKE_PROJECT_NAME} "${S13_OPUS_LIBRARY}")
     message(STATUS "S13 real Opus benchmark enabled; verify archive ABI and available SRAM")
 endif()
