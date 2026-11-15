@@ -28,6 +28,9 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#if defined(S18_G722_I2S_TX) && S18_G722_I2S_TX
+#include "slipstream_s18_link.h"
+#endif
 #if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
 #include "slipstream_s17_g722_live.h"
 #endif
@@ -671,6 +674,9 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     /* S17: actual post-limiter mic PCM, not synthesized startup audio. */
     s17_g722_live_push(s7_voice_16k);
 #endif
+#if defined(S18_G722_I2S_TX) && S18_G722_I2S_TX
+    s18_link_push(s7_voice_16k);
+#endif
 
     /*
      * Match ESP32's 16-bit voice input into
@@ -1065,6 +1071,18 @@ int main(void)
   }
 #endif
 
+#if defined(S18_G722_I2S_TX) && S18_G722_I2S_TX
+  if (!s18_link_init() || !s18_link_start())
+  {
+      const char *msg = "[S18] I2S3 or UART2 init/start failed\r\n";
+      HAL_UART_Transmit(&huart3,(uint8_t*)msg,strlen(msg),100);
+      Error_Handler();
+  }
+  {
+      const char *msg = "[S18] I2S3 framed G722 TX ready; UART2 115200 START/STOP/STATUS/PING\r\n";
+      HAL_UART_Transmit(&huart3,(uint8_t*)msg,strlen(msg),100);
+  }
+#endif
   /* Start continuous circular DMA */
   status = HAL_I2SEx_TransmitReceive_DMA(
       &hi2s2,
@@ -1186,6 +1204,12 @@ int main(void)
         s17_g722_live_run_one();
 #endif
 
+#if defined(S18_G722_I2S_TX) && S18_G722_I2S_TX
+    /* Keep DSP highest priority; encode only when all DMA halves serviced. */
+    if(s7_ready_count[0]==s7_done_count[0] &&
+       s7_ready_count[1]==s7_done_count[1])s18_link_run_one();
+    s18_link_service();
+#endif
     /*
     * UART report once per HAL second.
     * DMA callbacks are now short, so SysTick
