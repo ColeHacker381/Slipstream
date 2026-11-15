@@ -28,6 +28,9 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#if defined(S15_G722_BENCHMARK) && S15_G722_BENCHMARK
+#include "slipstream_s15_g722_bench.h"
+#endif
 #if defined(S14_SPEEX_BENCHMARK) && S14_SPEEX_BENCHMARK
 #include "slipstream_s14_speex_bench.h"
 #endif
@@ -985,6 +988,26 @@ int main(void)
       if(n>0)
           HAL_UART_Transmit(&huart3, (uint8_t*)msg,
               (uint16_t)(n<(int)sizeof(msg)?n:(int)sizeof(msg)-1), 250);
+  }
+#endif
+
+#if defined(S15_G722_BENCHMARK) && S15_G722_BENCHMARK
+  {
+      S15_G722Result bench = {0};
+      int ok = s15_g722_benchmark(&bench);
+      char msg[220];
+      int n = snprintf(msg, sizeof(msg),
+          "[S15] G722Bench ok=%d frames=%lu err=%lu Rate=64000 "
+          "Enc=%lu/%luus Dec=%lu/%luus Total=%lu/%luus "
+          "AvgBytes=%lu MaxBytes=%lu Frame=320\r\n",
+          ok,(unsigned long)bench.frames,(unsigned long)bench.errors,
+          (unsigned long)bench.enc_avg_us,(unsigned long)bench.enc_max_us,
+          (unsigned long)bench.dec_avg_us,(unsigned long)bench.dec_max_us,
+          (unsigned long)bench.total_avg_us,(unsigned long)bench.total_max_us,
+          (unsigned long)bench.avg_bytes,(unsigned long)bench.max_bytes);
+      if(n>0)
+          HAL_UART_Transmit(&huart3,(uint8_t *)msg,
+              (uint16_t)(n<(int)sizeof(msg)?n:(int)sizeof(msg)-1),250);
   }
 #endif
 
