@@ -38,7 +38,7 @@ for f in "${sources[@]}"; do
   arm-none-eabi-gcc -std=gnu99 -O3 -DNDEBUG -DFIXED_POINT -DVAR_ARRAYS \
     -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard \
     -ffunction-sections -fdata-sections \
-    -I"$SRC/include" -I"$OUT/include" -I"$SRC/libspeex" \
+    -I"$SRC/include" -I"$OUT/include" -I"$OUT/include/speex" -I"$SRC/libspeex" \
     -c "$SRC/libspeex/$f.c" -o "$obj"
   objects+=("$obj")
 done
