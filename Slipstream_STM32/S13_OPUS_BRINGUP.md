@@ -55,3 +55,32 @@ Return to 5 with `bash build100.sh -DS13_OPUS_COMPLEXITY=5`. The benchmark mode 
 - The STM32 application already uses ~5ms per 10ms DSP block in previous Performance100 logging. A single-core 100MHz MCU cannot blindly run an expensive encode+decode operation inside the 10ms DMA servicing function. Even if the pre-DMA startup benchmark succeeds, continuous scheduling must be designed and measured separately.
 - **Opus cannot be considered locally looped back** until a complete 320-sample decoded frame actually reaches WM8960 speakers. This first hardware gate only validates API, ARM linking, accuracy, RAM and isolated codec speed.
 - Preserve audio-only baseline, no S12 edits, no ESP bridge or Bluetooth work in this phase.
+
+## Performance optimization experiment (C0, same input)
+
+Measured baseline on user's hardware: fixed-point `-Os`, C0, 100 MHz: encode 7226 us average / 7368 max; decode 1254 us average / 1296 max; total 8480 us average / 8657 max. **Only startup synthetic signal**; no sustained DSP+Opus.
+
+Try fixed-point `-O3` without changing source, API, audio sampling, packet settings, or processor intrinsics:
+
+```sh
+bash setup_opus.sh fixed-o3
+bash opus100.sh "$PWD/third_party/opus/include" "$PWD/build/opus-fixed-o3-m4f/libopus.a"
+bash build100.sh -DS13_OPUS_COMPLEXITY=0
+bash flash100.sh
+```
+
+Or run VS Code task **STM32: Build and Flash Opus C0 O3**; it runs setup, configure, firmware build, and flash. Results will still show `[S13] OpusBench C=0`; identify the library variant from the build task. Compare Enc/Dec total avg/max, ROM usage and DSP telemetry to baseline. Don't assume `-O3` is faster or fits flash without measuring.
+
+To return to known-good original `-Os` library:
+
+```sh
+bash opus100.sh "$PWD/third_party/opus/include" "$PWD/build/opus-fixed-m4f/libopus.a"
+bash build100.sh -DS13_OPUS_COMPLEXITY=0
+bash flash100.sh
+```
+
+Optionally compare `bash setup_opus.sh float-o3` with `build/opus-float-o3-m4f/libopus.a`, but STM32F412 has only single-precision FPU; float build may cost more CPU and flash than fixed. This is a separate experiment.
+
+**Do not enable ARM NEON** on Cortex-M4F. Re-enabling upstream intrinsics can include NEON code incorrectly because of cross-compile detection. Targeted Cortex-M4 DSP assembly/intrinsics may help later, but must be explicitly audited, tested and benchmarked independently.
+
+After confirming Opus C0 -O3, the next benchmark improvement should use realistic speech PCM as well as synthetic input; packets of only 15 bytes per 20ms frame do not demonstrate worst-case 20 kbps speech behavior. Record live encode+decode while DSP runs before moving to intercom transport.
