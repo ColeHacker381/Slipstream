@@ -85,3 +85,23 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 )
+# S13 genuine libopus is an explicit external ARM source/static-library input.
+# No ESP32 prebuilt library is linked and no fake codec fallback is provided.
+option(S13_OPUS_BENCHMARK "Run real Opus startup benchmark before I2S DMA" OFF)
+set(S13_OPUS_INCLUDE_DIR "" CACHE PATH "ARM-compatible libopus include directory containing opus.h")
+set(S13_OPUS_LIBRARY "" CACHE FILEPATH "ARM Cortex-M4F libopus static archive (.a)")
+if(S13_OPUS_BENCHMARK)
+    if(NOT EXISTS "${S13_OPUS_INCLUDE_DIR}/opus.h")
+        message(FATAL_ERROR "S13 requires a real libopus opus.h at S13_OPUS_INCLUDE_DIR")
+    endif()
+    if(NOT EXISTS "${S13_OPUS_LIBRARY}")
+        message(FATAL_ERROR "S13 requires an ARM-targeted libopus archive at S13_OPUS_LIBRARY")
+    endif()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s13_opus_bench.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        "${S13_OPUS_INCLUDE_DIR}")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S13_OPUS_BENCHMARK=1)
+    target_link_libraries(${CMAKE_PROJECT_NAME} "${S13_OPUS_LIBRARY}")
+    message(STATUS "S13 real Opus benchmark enabled; verify archive ABI and available SRAM")
+endif()
