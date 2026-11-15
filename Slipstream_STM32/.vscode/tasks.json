@@ -511,6 +511,96 @@
             "dependsOrder": "sequence",
             "problemMatcher": [],
             "group": "build"
+        },
+        {
+            "label": "STM32: Build S17 G722 Live RX+TX",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "build100.sh",
+                "-DS13_OPUS_BENCHMARK=OFF",
+                "-DS13_OPUS_LIVE_TEST=OFF",
+                "-DS14_SPEEX_BENCHMARK=OFF",
+                "-DS15_G722_BENCHMARK=OFF",
+                "-DS16_CODEC2_BENCHMARK=OFF",
+                "-DS17_G722_LIVE_TEST=ON",
+                "-DS17_G722_LIVE_DECODE=ON",
+                "-DS15_G722_ROOT=${workspaceFolder}/third_party/g722tools",
+                "-DS15_G722_BUILD=${workspaceFolder}/build/g722-m4f"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Build G722 library",
+            "dependsOrder": "sequence",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "STM32: Build and Flash S17 G722 Live RX+TX",
+            "dependsOn": [
+                "STM32: Build S17 G722 Live RX+TX",
+                "STM32: Flash Performance100"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "STM32: Build S17 G722 Live TX-Only",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "build100.sh",
+                "-DS13_OPUS_BENCHMARK=OFF",
+                "-DS13_OPUS_LIVE_TEST=OFF",
+                "-DS14_SPEEX_BENCHMARK=OFF",
+                "-DS15_G722_BENCHMARK=OFF",
+                "-DS16_CODEC2_BENCHMARK=OFF",
+                "-DS17_G722_LIVE_TEST=ON",
+                "-DS17_G722_LIVE_DECODE=OFF",
+                "-DS15_G722_ROOT=${workspaceFolder}/third_party/g722tools",
+                "-DS15_G722_BUILD=${workspaceFolder}/build/g722-m4f"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Build G722 library",
+            "dependsOrder": "sequence",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "STM32: Build and Flash S17 G722 Live TX-Only",
+            "dependsOn": [
+                "STM32: Build S17 G722 Live TX-Only",
+                "STM32: Flash Performance100"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "STM32: Restore DSP-only after S17",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "build100.sh",
+                "-DS17_G722_LIVE_TEST=OFF",
+                "-DS15_G722_BENCHMARK=OFF",
+                "-DS14_SPEEX_BENCHMARK=OFF",
+                "-DS13_OPUS_BENCHMARK=OFF",
+                "-DS13_OPUS_LIVE_TEST=OFF",
+                "-DS16_CODEC2_BENCHMARK=OFF"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
         }
     ]
 }
