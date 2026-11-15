@@ -159,7 +159,11 @@ static uint32_t s8_max_committed_cycles = 0U;
 static uint32_t s8_uart_skipped = 0U;
 
 /* The UART HAL uses this buffer until interrupt-driven TX completes. */
-static uint8_t s8_uart_report[640]; /* S10 extends diagnostics beyond S9 */
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+static uint8_t s8_uart_report[960]; /* S13: room for live queue/codec timing */
+#else
+static uint8_t s8_uart_report[640]; /* Baseline telemetry unchanged */
+#endif
 #if S9_ENABLED && S7_MODE == 2
 static uint32_t s9_last_cycles = 0U;
 static uint32_t s9_max_cycles = 0U;
