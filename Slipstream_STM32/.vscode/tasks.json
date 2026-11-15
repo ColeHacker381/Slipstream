@@ -32,7 +32,7 @@
             ],
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false
             }
         },
         {
@@ -84,6 +84,123 @@
             "problemMatcher": [
                 "$gcc"
             ]
+        },
+        {
+            "label": "STM32: Configure Performance100",
+            "type": "shell",
+            "command": "cube-cmake",
+            "args": [
+                "--preset",
+                "Performance100"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "STM32: Build Performance100",
+            "type": "shell",
+            "command": "cube-cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "Performance100"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Configure Performance100",
+            "dependsOrder": "sequence",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            "label": "STM32: Flash Performance100",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "flash100.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            "label": "STM32: Build and Flash Performance100",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "STM32: Build Performance100",
+                "STM32: Flash Performance100"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "STM32: Configure Opus Benchmark C5",
+            "type": "shell",
+            "command": "cube-cmake",
+            "args": [
+                "--preset",
+                "Performance100",
+                "-DS13_OPUS_BENCHMARK=ON",
+                "-DS13_OPUS_COMPLEXITY=5",
+                "-DS13_OPUS_INCLUDE_DIR=${workspaceFolder}/third_party/opus/include",
+                "-DS13_OPUS_LIBRARY=${workspaceFolder}/build/opus-fixed-m4f/libopus.a"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "STM32: Build Opus Benchmark C5",
+            "type": "shell",
+            "command": "cube-cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "Performance100"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Configure Opus Benchmark C5",
+            "dependsOrder": "sequence",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            "label": "STM32: Build and Flash Opus Benchmark C5",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "STM32: Build Opus Benchmark C5",
+                "STM32: Flash Performance100"
+            ],
+            "problemMatcher": [],
+            "group": "build"
         }
     ]
 }
