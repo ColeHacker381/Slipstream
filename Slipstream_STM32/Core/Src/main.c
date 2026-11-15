@@ -28,6 +28,9 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
+#include "slipstream_s17_g722_live.h"
+#endif
 #if defined(S16_CODEC2_BENCHMARK) && S16_CODEC2_BENCHMARK
 #include "slipstream_s16_codec2_bench.h"
 #endif
@@ -180,7 +183,11 @@ static uint32_t s8_uart_skipped = 0U;
 #if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
 static uint8_t s8_uart_report[960]; /* S13: room for live queue/codec timing */
 #else
+#if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
+static uint8_t s8_uart_report[960]; /* S17 live stats + bitrate model */
+#else
 static uint8_t s8_uart_report[640]; /* Baseline telemetry unchanged */
+#endif
 #endif
 #if S9_ENABLED && S7_MODE == 2
 static uint32_t s9_last_cycles = 0U;
@@ -660,6 +667,10 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
        Decoded audio is intentionally NOT played in this stress test. */
     s13_live_push(s7_voice_16k);
 #endif
+#if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
+    /* S17: actual post-limiter mic PCM, not synthesized startup audio. */
+    s17_g722_live_push(s7_voice_16k);
+#endif
 
     /*
      * Match ESP32's 16-bit voice input into
@@ -1037,6 +1048,23 @@ int main(void)
   }
 #endif
 
+#if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
+  if (!s17_g722_live_init())
+  {
+      const char *msg = "[S17LIVE] init error; halting before DMA\r\n";
+      HAL_UART_Transmit(&huart3,(uint8_t*)msg,strlen(msg),100);
+      Error_Handler();
+  }
+  {
+#if S17_G722_LIVE_DECODE
+      const char *msg = "[S17LIVE] ON: live 20ms G722 encode+decode, speaker bypass; modeled RF only\r\n";
+#else
+      const char *msg = "[S17LIVE] ON: live 20ms G722 TX encode-only, speaker bypass; modeled RF only\r\n";
+#endif
+      HAL_UART_Transmit(&huart3,(uint8_t*)msg,strlen(msg),100);
+  }
+#endif
+
   /* Start continuous circular DMA */
   status = HAL_I2SEx_TransmitReceive_DMA(
       &hi2s2,
@@ -1144,6 +1172,23 @@ int main(void)
     else if (s7_ready_count[0] == s7_done_count[0] &&
              s7_ready_count[1] == s7_done_count[1])
         s13_live_run_one();
+#endif
+
+#if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
+    /* DSP's 10ms deadline is still absolute. No radio yet: only codec
+       load and RF packet/airtime estimates, not measured transmission. */
+    if(s7_missed_blocks || s7_deadline_misses || s5_dma_errors)
+        s17_g722_live_stop(1U);
+    else if(HAL_GetTick() >= 30000U)
+        s17_g722_live_stop(4U);
+    else if(s7_ready_count[0]==s7_done_count[0] &&
+            s7_ready_count[1]==s7_done_count[1])
+        s17_g722_live_run_one();
+    {
+        S17_G722LiveStats check;
+        s17_g722_live_stats(&check);
+        if(check.dropped) s17_g722_live_stop(5U);
+    }
 #endif
 
     /*
@@ -1315,6 +1360,37 @@ int main(void)
                 (unsigned long)limiter_clamps,
                 (unsigned long)limiter_post_peak
             );
+#if defined(S17_G722_LIVE_TEST) && S17_G722_LIVE_TEST
+            if(len>0 && len<(int)sizeof(s8_uart_report)-1)
+            {
+                S17_G722LiveStats st;
+                s17_g722_live_stats(&st);
+                int remain=(int)sizeof(s8_uart_report)-len;
+                int added=snprintf((char *)s8_uart_report+len-2,
+                    (size_t)(remain+2),
+                    " [S17LIVE] P=%lu E=%lu D=%lu Qdrop=%lu Qhi=%lu "
+                    "Enc=%lu/%lu Dec=%lu/%lu MaxRun=%lu "
+                    "Pkt=%lu Payload=%lu WireEst=%lu "
+                    "Err=%lu Stop=%lu Reason=%lu\r\n",
+                    (unsigned long)st.produced,
+                    (unsigned long)st.encoded,
+                    (unsigned long)st.decoded,
+                    (unsigned long)st.dropped,
+                    (unsigned long)st.queue_high,
+                    (unsigned long)st.enc_avg_us,
+                    (unsigned long)st.enc_max_us,
+                    (unsigned long)st.dec_avg_us,
+                    (unsigned long)st.dec_max_us,
+                    (unsigned long)st.run_max_us,
+                    (unsigned long)st.packet_bytes,
+                    (unsigned long)st.payload_bps,
+                    (unsigned long)st.modeled_wire_bps,
+                    (unsigned long)st.errors,
+                    (unsigned long)st.stopped,
+                    (unsigned long)st.reason);
+                if(added>0)len=len-2+added;
+            }
+#endif
 #if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
             if (len > 0 && len < (int)sizeof(s8_uart_report) - 1)
             {
