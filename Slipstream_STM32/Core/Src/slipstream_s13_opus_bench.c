@@ -15,6 +15,9 @@
 #define S13_FRAME_COUNT 50U
 #define S13_WARMUP_COUNT 5U
 #define S13_PACKET_MAX 512
+#ifndef S13_OPUS_COMPLEXITY
+#define S13_OPUS_COMPLEXITY 5
+#endif
 
 static int16_t s13_input[S13_FRAME_SAMPLES];
 static int16_t s13_decoded[S13_FRAME_SAMPLES];
@@ -51,7 +54,7 @@ int s13_opus_benchmark(S13_OpusBenchResult *out)
     int rc = opus_encoder_init(encoder, S13_SAMPLE_RATE, 1, OPUS_APPLICATION_VOIP);
     if (rc == OPUS_OK) rc = opus_decoder_init(decoder, S13_SAMPLE_RATE, 1);
     if (rc == OPUS_OK) rc = opus_encoder_ctl(encoder, OPUS_SET_BITRATE(20000));
-    if (rc == OPUS_OK) rc = opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(5));
+    if (rc == OPUS_OK) rc = opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(S13_OPUS_COMPLEXITY));
     if (rc == OPUS_OK) rc = opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
     if (rc == OPUS_OK) rc = opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(0));
     if (rc == OPUS_OK) rc = opus_encoder_ctl(encoder, OPUS_SET_DTX(0));
