@@ -28,20 +28,24 @@ S12_WindResult s12_analyze_raw_48k(const float *pcm, uint32_t frames)
 {
     S12_WindResult r = {0};
     if (pcm == NULL || frames == 0U) return r;
-    double raw_sq = 0.0;
-    double band_sq = 0.0;
+    /* Cortex-M4F has hardware float but emulates double arithmetic.
+       Single precision provides ample range for 480 PCM samples. */
+    float raw_sq = 0.0f;
+    float band_sq = 0.0f;
     for (uint32_t i = 0U; i < frames; ++i)
     {
         const float x = pcm[i];
         lp20 += LP20_ALPHA * (x - lp20);
         lp200 += LP200_ALPHA * (x - lp200);
         const float wind_band = lp200 - lp20;
-        raw_sq += (double)x * (double)x;
-        band_sq += (double)wind_band * (double)wind_band;
+        raw_sq += x * x;
+        band_sq += wind_band * wind_band;
     }
-    const float raw_rms = sqrtf((float)(raw_sq / (double)frames));
-    const float band_rms = sqrtf((float)(band_sq / (double)frames));
-    const float ratio = raw_rms > 1.0f ? band_rms / raw_rms : 0.0f;
+    const float raw_rms = sqrtf(raw_sq / (float)frames);
+    const float band_rms = sqrtf(band_sq / (float)frames);
+    /* Ratios near digital silence are dominated by the IIR filter tail:
+       report zero below meaningful raw signal level, never classify it. */
+    const float ratio = raw_rms >= 25.0f ? band_rms / raw_rms : 0.0f;
     r.raw_rms = (uint32_t)raw_rms;
     r.wind_band_rms = (uint32_t)band_rms;
     r.low_ratio_pct = (uint32_t)(fminf(ratio, 1.0f) * 100.0f);
