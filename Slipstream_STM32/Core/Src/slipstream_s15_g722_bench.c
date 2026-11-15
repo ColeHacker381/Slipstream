@@ -49,7 +49,7 @@ int s15_g722_benchmark(S15_G722Result *out)
     out->total_avg_us=usec((uint32_t)(ts/out->frames));
     out->avg_bytes=(uint32_t)(bs/out->frames);
   }
-  g722_encode_release(&g722_e);
-  g722_decode_release(&g722_d);
+  /* Upstream release() calls free(). These states are static, so NEVER
+     release them; they are reset by init() on the next boot. */
   return out->frames==50 && out->errors==0;
 }
