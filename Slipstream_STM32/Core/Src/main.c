@@ -97,7 +97,8 @@ static void MX_I2S2_Init(void);
 #define S10_ENABLED 1 /* 0 = S9 baseline, 1 = VAD-aware ESP32 AGC */
 #define S11_ENABLED 1 /* 0 = S10 bypass, 1 = original ESP32 H11 lookahead limiter */
 #define S12_DIAGNOSTICS 1 /* Raw wind features and AGC motion telemetry */
-#define S12_SUPPRESSION 1 /* 0 = exact S12.2 audio baseline; 1 = conservative wind low-band blend */
+#define S12_SUPPRESSION 1 /* 0 = exact S12.2 audio bypass */
+#define S12_MID_SUPPRESSION 1 /* 0 = S12.3 low-only; 1 = S12.4 experimental 220-1400 Hz band */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -612,7 +613,7 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
        wind is present; before S9 VAD/S10 AGC and after S8. */
     uint32_t s12_suppress_start = DWT->CYCCNT;
     s12_suppress_16k(s7_voice_16k, s12_suppressed_16k,
-                     S7_VOICE_SAMPLES, S12_SUPPRESSION);
+                     S7_VOICE_SAMPLES, S12_SUPPRESSION, S12_MID_SUPPRESSION);
     uint32_t s12_elapsed = DWT->CYCCNT - s12_suppress_start;
     s12_suppress_last_cycles = s12_elapsed;
     if (s12_elapsed > s12_suppress_max_cycles)
@@ -1138,7 +1139,7 @@ int main(void)
         uint32_t wind_active = 0U, wind_speech = 0U;
         uint32_t wind_raw_max = 0U, wind_low_mean = 0U, wind_mid_mean = 0U;
         uint32_t wind_ratio_mean = 0U;
-        uint32_t wind_state_blocks = 0U, suppress_mix = 0U;
+        uint32_t wind_state_blocks = 0U, suppress_mix = 0U, suppress_mid = 0U;
         uint32_t suppress_us = 0U, suppress_max_us = 0U;
         int32_t gain_step10 = 0;
 #if S12_DIAGNOSTICS && S7_MODE == 2
@@ -1159,6 +1160,7 @@ int main(void)
         gain_step10 = s12_max_gain_step10;
         wind_state_blocks = s12_wind_state_blocks;
         suppress_mix = s12_suppress_stats().last_mix_pct;
+        suppress_mid = s12_suppress_stats().last_mid_pct;
         if (SystemCoreClock != 0U)
         {
             suppress_us = (uint32_t)((uint64_t)s12_suppress_last_cycles * 1000000ULL / SystemCoreClock);
@@ -1170,7 +1172,7 @@ int main(void)
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S12.3] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S12.4] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
@@ -1183,7 +1185,7 @@ int main(void)
                 "Hits=%lu Clamp=%lu LPeak=%lu "
                 "WRMS=%lu WBand=%lu WRatio=%lu WMax=%lu WBlocks=%lu GStep10=%ld "
                 "WAct=%lu WSp=%lu WRawMax=%lu WLo=%lu WMid=%lu WRAvg=%lu "
-                "WState=%lu WBlend=%lu SUP=%lu/%lu\r\n",
+                "WState=%lu WBlend=%lu WMidMix=%lu SUP=%lu/%lu\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1244,6 +1246,7 @@ int main(void)
                 (unsigned long)wind_ratio_mean,
                 (unsigned long)wind_state_blocks,
                 (unsigned long)suppress_mix,
+                (unsigned long)suppress_mid,
                 (unsigned long)suppress_us,
                 (unsigned long)suppress_max_us
             );
