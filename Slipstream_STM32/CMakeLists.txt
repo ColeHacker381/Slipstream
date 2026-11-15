@@ -49,6 +49,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_fir_decimate_f32.c
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_fir_interpolate_init_f32.c
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/FilteringFunctions/arm_fir_interpolate_f32.c
+
+    # S8 CMSIS 512-point complex FFT and ESP32-compatible noise suppressor
+    ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s8.c
+    ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/TransformFunctions/arm_cfft_f32.c
+    ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/TransformFunctions/arm_cfft_radix8_f32.c
+    ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/TransformFunctions/arm_bitreversal2.c
+    ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/CommonTables/arm_const_structs.c
+    ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/CommonTables/arm_common_tables.c
 )
 
 # Add include paths

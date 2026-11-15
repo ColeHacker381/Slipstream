@@ -58,6 +58,7 @@
 extern DMA_HandleTypeDef hdma_spi2_tx;
 extern DMA_HandleTypeDef hdma_i2s2_ext_rx;
 /* USER CODE BEGIN EV */
+extern UART_HandleTypeDef huart3;
 
 /* USER CODE END EV */
 
@@ -228,5 +229,15 @@ void DMA1_Stream4_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+/*
+ * USART3 is the ST-LINK virtual COM interface.
+ * HAL_UART_Transmit_IT in main.c needs this handler to finish.
+ * Audio DMA interrupts are priority 0; USART3 is priority 5.
+ */
+void USART3_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&huart3);
+}
+
 
 /* USER CODE END 1 */

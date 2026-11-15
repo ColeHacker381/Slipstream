@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "arm_math.h"
+#include "slipstream_s8.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,6 +88,7 @@ static void MX_I2S2_Init(void);
  * 2 = original FIR resampler + original HPF/LPF
  */
 #define S7_MODE 2
+#define S8_ENABLED 1 /* 0 = S7 bypass, 1 = ESP32 S8 noise suppressor */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -130,6 +132,23 @@ static uint32_t s7_input_peak = 0;
 static uint32_t s7_output_peak = 0;
 static uint32_t s7_last_cycles = 0;
 static uint32_t s7_max_cycles = 0;
+
+/* S8.1 diagnostics only: these do not modify PCM samples or FIR state. */
+static uint32_t s8_voice_peak = 0U;       /* After frozen HPF / LPF */
+static uint32_t s8_ns_peak = 0U;          /* After S8, before interpolation */
+static uint32_t s8_dec_clip = 0U;         /* Pre-saturation PCM conversion */
+static uint32_t s8_filter_clip = 0U;
+static uint32_t s8_output_clip = 0U;
+static uint32_t s8_reject_budget = 0U;    /* Processing exceeded 95% threshold */
+static uint32_t s8_reject_sequence = 0U;  /* Same RX half completed again */
+static uint32_t s8_reject_irq = 0U;       /* Another DMA boundary occurred */
+static uint32_t s8_commit_irq = 0U;       /* Observational: IRQ during TX memcpy */
+static uint32_t s8_max_committed_cycles = 0U;
+static uint32_t s8_uart_skipped = 0U;
+
+/* The UART HAL uses this buffer until interrupt-driven TX completes. */
+static uint8_t s8_uart_report[400];
+
 
 /* -----------------------------------------
  * WM8960 — unchanged from working S5
@@ -288,6 +307,11 @@ static float32_t s7_decimated_16k[S7_VOICE_SAMPLES];
 static float32_t s7_playback_48k[S5_FRAMES_PER_HALF];
 
 static int16_t s7_voice_16k[S7_VOICE_SAMPLES];
+#if S8_ENABLED
+static int16_t s8_clean_16k[S7_VOICE_SAMPLES];
+static uint32_t s8_last_cycles = 0U;
+static uint32_t s8_max_cycles = 0U;
+#endif
 
 /*
  * Keep a full stereo output staging block.
@@ -410,6 +434,11 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
 
     uint32_t input_peak = 0;
     uint32_t output_peak = 0;
+    uint32_t voice_peak = 0U;
+    uint32_t ns_peak = 0U;
+    uint32_t dec_clip = 0U;
+    uint32_t filter_clip = 0U;
+    uint32_t out_clip = 0U;
 
     /*
      * Copy microphone data out of the completed
@@ -462,6 +491,9 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
      */
     for (uint32_t i = 0; i < S7_VOICE_SAMPLES; i++)
     {
+        if (s7_decimated_16k[i] > 32767.0f ||
+            s7_decimated_16k[i] < -32768.0f)
+            dec_clip++;
         s7_voice_16k[i] =
             s7_clip_pcm(s7_decimated_16k[i]);
     }
@@ -477,8 +509,34 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
         sample = s7_biquad_process(&s7_hpf, sample);
         sample = s7_biquad_process(&s7_lpf, sample);
 
+        if (sample > 32767.0f || sample < -32768.0f)
+            filter_clip++;
         s7_voice_16k[i] = s7_clip_pcm(sample);
     }
+#endif
+
+    /* Peak of the filtered 16 kHz voice signal, before NS. */
+    for (uint32_t i = 0U; i < S7_VOICE_SAMPLES; i++)
+    {
+        uint32_t p = s7_abs_pcm(s7_voice_16k[i]);
+        if (p > voice_peak) voice_peak = p;
+    }
+
+#if S8_ENABLED && S7_MODE == 2
+    /* ESP32 H8: suppress after HPF/LPF, before upsampling. */
+    uint32_t ns_start = DWT->CYCCNT;
+    s8_process(s7_voice_16k, s8_clean_16k);
+    uint32_t ns_elapsed = DWT->CYCCNT - ns_start;
+    s8_last_cycles = ns_elapsed;
+    if (ns_elapsed > s8_max_cycles) s8_max_cycles = ns_elapsed;
+    for (uint32_t i = 0U; i < S7_VOICE_SAMPLES; i++)
+    {
+        uint32_t p = s7_abs_pcm(s8_clean_16k[i]);
+        if (p > ns_peak) ns_peak = p;
+    }
+    memcpy(s7_voice_16k, s8_clean_16k, sizeof(s7_voice_16k));
+#else
+    ns_peak = voice_peak; /* By design: NS bypassed. */
 #endif
 
     /*
@@ -507,11 +565,11 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
      */
     for (uint32_t i = 0; i < S5_FRAMES_PER_HALF; i++)
     {
-        int16_t pcm = s7_clip_pcm(
-            s7_playback_48k[i] *
-            (float)S7_RATIO *
-            S7_PLAYBACK_GAIN
-        );
+        float out_float = s7_playback_48k[i] *
+            (float)S7_RATIO * S7_PLAYBACK_GAIN;
+        if (out_float > 32767.0f || out_float < -32768.0f)
+            out_clip++;
+        int16_t pcm = s7_clip_pcm(out_float);
 
         s7_tx_stage[i * 2U] = (uint16_t)pcm;
         s7_tx_stage[i * 2U + 1U] = (uint16_t)pcm;
@@ -524,53 +582,50 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
 #endif
 
     uint32_t elapsed = DWT->CYCCNT - start_cycles;
-
-    s7_last_cycles = elapsed;
-    if (elapsed > s7_max_cycles)
-        s7_max_cycles = elapsed;
-
-    /*
-     * One DMA half represents 10 ms.
-     * Require margin for copying the completed
-     * output to the transmit buffer.
-     */
     uint32_t deadline_cycles = SystemCoreClock / 100U;
 
-    if (elapsed >= (deadline_cycles * 95U) / 100U ||
-        s7_ready_count[half] != sequence ||
-        s7_irq_blocks != irq_at_start)
+    /* Capture useful stage diagnostics even for a rejected TX block.
+       This keeps clipping/peak information from disappearing on Late. */
+    if (input_peak > s7_input_peak) s7_input_peak = input_peak;
+    if (voice_peak > s8_voice_peak) s8_voice_peak = voice_peak;
+    if (ns_peak > s8_ns_peak) s8_ns_peak = ns_peak;
+    if (output_peak > s7_output_peak) s7_output_peak = output_peak;
+    s8_dec_clip += dec_clip;
+    s8_filter_clip += filter_clip;
+    s8_output_clip += out_clip;
+
+    /* Keep the existing 95% acceptance policy, but distinguish WHY
+       a block is rejected. Multiple reasons may be recorded for one
+       rejection, while Late increments only once per rejected block. */
+    uint32_t reject_budget =
+        elapsed >= (deadline_cycles * 95U) / 100U;
+    uint32_t reject_sequence = s7_ready_count[half] != sequence;
+    uint32_t reject_irq = s7_irq_blocks != irq_at_start;
+    if (reject_budget || reject_sequence || reject_irq)
     {
+        s8_reject_budget += reject_budget;
+        s8_reject_sequence += reject_sequence;
+        s8_reject_irq += reject_irq;
         s7_deadline_misses++;
+        s7_last_cycles = elapsed;
+        if (elapsed > s7_max_cycles) s7_max_cycles = elapsed;
         return 0;
     }
 
-    /*
-     * Check that DMA hasn't already advanced
-     * into the region we're about to overwrite.
-     */
-    uint32_t other_half = half ^ 1U;
+    /* The TX and RX DMA streams are independent. We do not change
+       buffer ownership in this diagnostics pass. This post-copy
+       counter merely identifies potential DMA boundaries overlapping
+       the copy and is not a complete underrun detector. */
+    uint32_t irq_before_commit = s7_irq_blocks;
+    memcpy(&s5_tx[offset], s7_tx_stage, sizeof(s7_tx_stage));
+    if (s7_irq_blocks != irq_before_commit) s8_commit_irq++;
 
-    /*
-     * A subsequent DMA half-completion event
-     * means the writable window has closed.
-     *
-     * We use the aggregate callback count
-     * recorded at processing start (below in
-     * the main loop) for further diagnosis.
-     */
-    (void)other_half;
-
-    memcpy(
-        &s5_tx[offset],
-        s7_tx_stage,
-        sizeof(s7_tx_stage)
-    );
-
-    if (input_peak > s7_input_peak)
-        s7_input_peak = input_peak;
-
-    if (output_peak > s7_output_peak)
-        s7_output_peak = output_peak;
+    uint32_t committed_cycles = DWT->CYCCNT - start_cycles;
+    s7_last_cycles = committed_cycles;
+    if (committed_cycles > s7_max_cycles)
+        s7_max_cycles = committed_cycles;
+    if (committed_cycles > s8_max_committed_cycles)
+        s8_max_committed_cycles = committed_cycles;
 
     s7_processed_blocks++;
 
@@ -636,6 +691,12 @@ int main(void)
       100
   );
 
+  /* Diagnostics may never block audio servicing. USART3 ST-LINK VCP
+     uses low-priority interrupt-driven TX for periodic reports.
+     Boot errors above intentionally still use blocking UART. */
+  HAL_NVIC_SetPriority(USART3_IRQn, 5U, 0U);
+  HAL_NVIC_EnableIRQ(USART3_IRQn);
+
   /* Restore known-good codec initialization */
   HAL_StatusTypeDef status = wm8960_headphone_init();
 
@@ -668,6 +729,15 @@ int main(void)
 
       Error_Handler();
   }
+
+#if S8_ENABLED
+  if (!s8_init())
+  {
+      const char *msg = "[S8] FFT noise suppressor init failed\r\n";
+      HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), 100);
+      Error_Handler();
+  }
+#endif
 
   /* Initialize ARM CMSIS-DSP filters */
   if (!s7_resampler_init())
@@ -835,46 +905,85 @@ int main(void)
             );
         }
 
-        char msg[220];
-
-        int len = snprintf(
-            msg,
-            sizeof(msg),
-            "[S7] Mode=%d IRQ/s=%lu Voice/s=%lu "
-            "In=%lu Out=%lu "
-            "Proc=%luus Max=%luus "
-            "Missed=%lu Late=%lu DMAErr=%lu\r\n",
-            S7_MODE,
-            (unsigned long)irqs_per_second,
-            (unsigned long)voice_per_second,
-            (unsigned long)s7_input_peak,
-            (unsigned long)s7_output_peak,
-            (unsigned long)processing_us,
-            (unsigned long)max_processing_us,
-            (unsigned long)s7_missed_blocks,
-            (unsigned long)s7_deadline_misses,
-            (unsigned long)s5_dma_errors
-        );
-
-        if (len > 0)
+        uint32_t ns_us = 0U, ns_max_us = 0U, ns_ready = 0U;
+#if S8_ENABLED
+        if (SystemCoreClock != 0U)
         {
-            uint16_t tx_len = (uint16_t)(
-                (len < (int)sizeof(msg))
-                ? len
-                : (int)sizeof(msg) - 1
-            );
-
-            HAL_UART_Transmit(
-                &huart3,
-                (uint8_t *)msg,
-                tx_len,
-                50
-            );
+            ns_us = (uint32_t)((uint64_t)s8_last_cycles * 1000000ULL / SystemCoreClock);
+            ns_max_us = (uint32_t)((uint64_t)s8_max_cycles * 1000000ULL / SystemCoreClock);
         }
+        ns_ready = s8_noise_ready();
+#endif
+        /*
+         * A single compact line provides the entire stage history.
+         * Peaks are maximum absolute PCM values since the last report;
+         * they're not time-aligned with one another.
+         *
+         * B=processing budget, S=RX half sequence, I=DMA boundary.
+         * Reasons can overlap; Late counts rejected blocks once.
+         * C=IRQ during output memcpy (observational, not a TX
+         * buffer-ownership guarantee).
+         */
+        if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
+        {
+            int len = snprintf(
+                (char *)s8_uart_report,
+                sizeof(s8_uart_report),
+                "[S8.1] En=%u IRQ/s=%lu Voice/s=%lu "
+                "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
+                "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
+                "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
+                "Miss=%lu Late=%lu B/S/I=%lu/%lu/%lu C=%lu "
+                "DMA=%lu Uskip=%lu\r\n",
+                (unsigned)S8_ENABLED,
+                (unsigned long)irqs_per_second,
+                (unsigned long)voice_per_second,
+                (unsigned long)s7_input_peak,
+                (unsigned long)s8_voice_peak,
+                (unsigned long)s8_ns_peak,
+                (unsigned long)s7_output_peak,
+                (unsigned long)s8_dec_clip,
+                (unsigned long)s8_filter_clip,
+                (unsigned long)s8_clipped_samples(),
+                (unsigned long)s8_output_clip,
+                (unsigned long)processing_us,
+                (unsigned long)max_processing_us,
+                (unsigned long)ns_us,
+                (unsigned long)ns_max_us,
+                (unsigned long)ns_ready,
+                (unsigned long)s7_missed_blocks,
+                (unsigned long)s7_deadline_misses,
+                (unsigned long)s8_reject_budget,
+                (unsigned long)s8_reject_sequence,
+                (unsigned long)s8_reject_irq,
+                (unsigned long)s8_commit_irq,
+                (unsigned long)s5_dma_errors,
+                (unsigned long)s8_uart_skipped
+            );
+            if (len > 0)
+            {
+                uint16_t tx_len = (uint16_t)(
+                    len < (int)sizeof(s8_uart_report)
+                    ? len : (int)sizeof(s8_uart_report) - 1
+                );
+                if (HAL_UART_Transmit_IT(
+                        &huart3, s8_uart_report, tx_len) != HAL_OK)
+                    s8_uart_skipped++;
+            }
+        }
+        else s8_uart_skipped++;
 
         s7_input_peak = 0;
         s7_output_peak = 0;
+        s8_voice_peak = 0;
+        s8_ns_peak = 0;
+        s8_dec_clip = 0;
+        s8_filter_clip = 0;
+        s8_output_clip = 0;
         s7_max_cycles = 0;
+#if S8_ENABLED
+        s8_max_cycles = 0;
+#endif
     }
 
     /* Continue looping immediately. */
