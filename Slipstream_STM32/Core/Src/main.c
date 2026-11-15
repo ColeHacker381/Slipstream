@@ -1184,11 +1184,6 @@ int main(void)
     else if(s7_ready_count[0]==s7_done_count[0] &&
             s7_ready_count[1]==s7_done_count[1])
         s17_g722_live_run_one();
-    {
-        S17_G722LiveStats check;
-        s17_g722_live_stats(&check);
-        if(check.dropped) s17_g722_live_stop(5U);
-    }
 #endif
 
     /*
