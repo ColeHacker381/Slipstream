@@ -16,6 +16,9 @@ if [[ ! -d "$OPUS_SRC/.git" ]]; then
   mkdir -p "$PWD/third_party"
   git clone --depth 1 --branch v1.5.2 https://github.com/xiph/opus.git "$OPUS_SRC"
 fi
+# Cortex-M4F supports DSP/FPU instructions but NOT ARM NEON SIMD.
+# Upstream cross-compile probes can incorrectly enable NEON source files;
+# explicitly disable Opus architecture intrinsics for correct portable C build.
 # Keep third_party/opus untracked and isolated from the STM32 repository.
 if [[ "$FLAVOR" == fixed ]]; then FIXED=ON; else FIXED=OFF; fi
 OPUS_BUILD="$PWD/build/opus-${FLAVOR}-m4f"
@@ -24,6 +27,7 @@ cmake -S "$OPUS_SRC" -B "$OPUS_BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
   -DOPUS_FIXED_POINT="$FIXED" \
+  -DOPUS_DISABLE_INTRINSICS=ON \
   -DOPUS_BUILD_TESTING=OFF \
   -DBUILD_TESTING=OFF \
   -DOPUS_BUILD_PROGRAMS=OFF \
