@@ -35,7 +35,7 @@ sources=(
 objects=()
 for f in "${sources[@]}"; do
   obj="$OUT/obj/$f.o"
-  arm-none-eabi-gcc -std=gnu99 -O3 -DNDEBUG -DFIXED_POINT -DVAR_ARRAYS \
+  arm-none-eabi-gcc -std=gnu99 -O3 -DNDEBUG -DFIXED_POINT -DVAR_ARRAYS -DEXPORT= \
     -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard \
     -ffunction-sections -fdata-sections \
     -I"$SRC/include" -I"$OUT/include" -I"$OUT/include/speex" -I"$SRC/libspeex" \
