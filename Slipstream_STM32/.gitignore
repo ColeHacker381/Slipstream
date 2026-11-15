@@ -1,3 +1,5 @@
 build
 mx.scratch
 !.settings
+# Upstream Opus checkout produced by setup_opus.sh (not vendored)
+third_party/opus/
