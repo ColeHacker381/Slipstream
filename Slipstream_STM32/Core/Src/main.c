@@ -28,6 +28,9 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#if defined(S16_CODEC2_BENCHMARK) && S16_CODEC2_BENCHMARK
+#include "slipstream_s16_codec2_bench.h"
+#endif
 #if defined(S15_G722_BENCHMARK) && S15_G722_BENCHMARK
 #include "slipstream_s15_g722_bench.h"
 #endif
@@ -1005,6 +1008,29 @@ int main(void)
           (unsigned long)bench.dec_avg_us,(unsigned long)bench.dec_max_us,
           (unsigned long)bench.total_avg_us,(unsigned long)bench.total_max_us,
           (unsigned long)bench.avg_bytes,(unsigned long)bench.max_bytes);
+      if(n>0)
+          HAL_UART_Transmit(&huart3,(uint8_t *)msg,
+              (uint16_t)(n<(int)sizeof(msg)?n:(int)sizeof(msg)-1),250);
+  }
+#endif
+
+#if defined(S16_CODEC2_BENCHMARK) && S16_CODEC2_BENCHMARK
+  {
+      S16_Codec2BenchResult bench = {0};
+      int ok = s16_codec2_benchmark(&bench);
+      char msg[250];
+      int n = snprintf(msg, sizeof(msg),
+          "[S16] Codec2Bench 3200 ok=%d frames=%lu err=%lu "
+          "Samples8k=%lu Bytes=%lu "
+          "Down=%lu/%luus Enc=%lu/%luus Dec=%lu/%luus "
+          "Up=%lu/%luus Total=%lu/%luus\r\n",
+          ok,(unsigned long)bench.frames,(unsigned long)bench.errors,
+          (unsigned long)bench.samples8k,(unsigned long)bench.packet_bytes,
+          (unsigned long)bench.down_avg_us,(unsigned long)bench.down_max_us,
+          (unsigned long)bench.enc_avg_us,(unsigned long)bench.enc_max_us,
+          (unsigned long)bench.dec_avg_us,(unsigned long)bench.dec_max_us,
+          (unsigned long)bench.up_avg_us,(unsigned long)bench.up_max_us,
+          (unsigned long)bench.total_avg_us,(unsigned long)bench.total_max_us);
       if(n>0)
           HAL_UART_Transmit(&huart3,(uint8_t *)msg,
               (uint16_t)(n<(int)sizeof(msg)?n:(int)sizeof(msg)-1),250);
