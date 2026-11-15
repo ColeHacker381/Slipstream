@@ -215,3 +215,21 @@ if(S17_G722_LIVE_TEST)
         S17_G722_LIVE_DECODE=$<BOOL:${S17_G722_LIVE_DECODE}>)
     message(WARNING "S17 G.722 live stress test enabled: auto-stop on first missed audio deadline, not production-safe")
 endif()
+
+# S18 STM32 -> ESP32 wired transport, G.722 packet stream over USART2 DMA.
+option(S18_G722_UART_TX "S18 live G722 USART2 PA2 DMA TX (initial link test)" OFF)
+if(S18_G722_UART_TX)
+    if(S13_OPUS_BENCHMARK OR S13_OPUS_LIVE_TEST OR S14_SPEEX_BENCHMARK OR
+       S15_G722_BENCHMARK OR S16_CODEC2_BENCHMARK OR S17_G722_LIVE_TEST)
+        message(FATAL_ERROR "S18 UART TX must run without S13-S17 codec benchmarks/live stress")
+    endif()
+    if(NOT EXISTS "${S15_G722_ROOT}/src/g722.h" OR
+       NOT EXISTS "${S15_G722_BUILD}/libg722.a")
+        message(FATAL_ERROR "S18 requires bash setup_g722.sh and S15_G722_ROOT/BUILD")
+    endif()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s18_link.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${S15_G722_ROOT}/src")
+    target_link_libraries(${CMAKE_PROJECT_NAME} "${S15_G722_BUILD}/libg722.a")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S18_G722_UART_TX=1)
+    message(WARNING "S18 UART2 G722 live TX enabled: ESP32 RF and RX playback NOT yet integrated")
+endif()
