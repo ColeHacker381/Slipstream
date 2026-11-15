@@ -422,6 +422,50 @@
             "dependsOrder": "sequence",
             "problemMatcher": [],
             "group": "build"
+        },
+        {
+            "label": "STM32: Build G722 library",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "setup_g722.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "STM32: Build S15 G722 Benchmark",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "build100.sh",
+                "-DS13_OPUS_BENCHMARK=OFF",
+                "-DS13_OPUS_LIVE_TEST=OFF",
+                "-DS14_SPEEX_BENCHMARK=OFF",
+                "-DS15_G722_BENCHMARK=ON",
+                "-DS15_G722_ROOT=${workspaceFolder}/third_party/g722tools",
+                "-DS15_G722_BUILD=${workspaceFolder}/build/g722-m4f"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Build G722 library",
+            "dependsOrder": "sequence",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "STM32: Build and Flash S15 G722 Benchmark",
+            "dependsOn": [
+                "STM32: Build S15 G722 Benchmark",
+                "STM32: Flash Performance100"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": "build"
         }
     ]
 }
