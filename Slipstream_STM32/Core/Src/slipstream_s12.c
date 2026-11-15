@@ -46,6 +46,7 @@ static float blend = 0.0f;
 static float mid_lp_low = 0.0f;
 static float mid_lp_high = 0.0f;
 static float mid_blend = 0.0f;
+static float guard_reduction_db = 0.0f;
 static S12_SuppressStats suppress_stats = {0};
 
 void s12_reset(void)
@@ -129,6 +130,7 @@ void s12_suppress_reset(void)
     mid_lp_low = 0.0f;
     mid_lp_high = 0.0f;
     mid_blend = 0.0f;
+    guard_reduction_db = 0.0f;
     suppress_stats = (S12_SuppressStats){0};
 }
 
@@ -185,4 +187,39 @@ void s12_suppress_clear_interval(void)
 {
     suppress_stats.filtered_blocks = 0U;
     suppress_stats.active_blocks = 0U;
+}
+
+uint32_t s12_pcm_rms(const int16_t *input, uint32_t frames)
+{
+    if (input == NULL || frames == 0U) return 0U;
+    float sum = 0.0f;
+    for (uint32_t i = 0U; i < frames; ++i)
+    {
+        const float x = (float)input[i];
+        sum += x * x;
+    }
+    return (uint32_t)sqrtf(sum / (float)frames);
+}
+
+void s12_wind_gain_guard(int16_t *samples, uint32_t frames,
+                         float agc_gain_db, uint8_t wind_detected,
+                         uint8_t enable)
+{
+    if (samples == NULL || frames == 0U) return;
+    /* Avoid modifying S10's internal gain state. If S10 already
+       attenuates a loud wind burst, leave it untouched. */
+    float target = (enable && wind_detected && agc_gain_db > 0.0f)
+        ? agc_gain_db : 0.0f;
+    if (target > 18.0f) target = 18.0f;
+    guard_reduction_db += 0.05f * (target - guard_reduction_db);
+    if (guard_reduction_db < 0.005f) guard_reduction_db = 0.0f;
+    if (!enable || guard_reduction_db == 0.0f) return;
+    const float gain = powf(10.0f, -guard_reduction_db / 20.0f);
+    for (uint32_t i = 0U; i < frames; ++i)
+        samples[i] = (int16_t)((float)samples[i] * gain);
+}
+
+uint32_t s12_guard_reduction_db10(void)
+{
+    return (uint32_t)(guard_reduction_db * 10.0f);
 }
