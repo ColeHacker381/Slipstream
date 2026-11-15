@@ -46,6 +46,7 @@ idf_component_register(
 
         "tests/h18_espnow.cpp"
         "tests/h19_bluetooth_mix.cpp"
+        "tests/s18_stm32_link.cpp"
 
 
     INCLUDE_DIRS
@@ -54,6 +55,7 @@ idf_component_register(
     PRIV_REQUIRES
         esp_driver_i2c
         esp_driver_i2s
+        esp_driver_uart
         esp_timer
         esp-dsp
         esp_wifi
