@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Download reproducible upstream libopus and cross-compile for STM32F412 (ARM M4F).
-# Run: bash setup_opus.sh [fixed|float]
+# Run: bash setup_opus.sh [fixed|float|fixed-o3|float-o3]
 set -euo pipefail
 cd "$(dirname "$0")"
 FLAVOR="${1:-fixed}"
-if [[ "$FLAVOR" != fixed && "$FLAVOR" != float ]]; then
-  echo "Usage: bash setup_opus.sh [fixed|float]" >&2
+if [[ "$FLAVOR" != fixed && "$FLAVOR" != float && "$FLAVOR" != fixed-o3 && "$FLAVOR" != float-o3 ]]; then
+  echo "Usage: bash setup_opus.sh [fixed|float|fixed-o3|float-o3]" >&2
   exit 2
 fi
 for cmd in git cmake ninja arm-none-eabi-gcc arm-none-eabi-ar; do
@@ -20,11 +20,20 @@ fi
 # Upstream cross-compile probes can incorrectly enable NEON source files;
 # explicitly disable Opus architecture intrinsics for correct portable C build.
 # Keep third_party/opus untracked and isolated from the STM32 repository.
-if [[ "$FLAVOR" == fixed ]]; then FIXED=ON; else FIXED=OFF; fi
+if [[ "$FLAVOR" == fixed* ]]; then FIXED=ON; else FIXED=OFF; fi
+# Keep legacy fixed/float build paths untouched as A/B baselines.
+# Optimized variants are distinct archives; CMake caches cannot silently
+# contaminate the previously measured -Os fixed-point configuration.
+if [[ "$FLAVOR" == *-o3 ]]; then
+  OPUS_RELEASE_FLAGS="-O3 -g0 -DNDEBUG"
+else
+  OPUS_RELEASE_FLAGS="-Os -g0 -DNDEBUG"
+fi
 OPUS_BUILD="$PWD/build/opus-${FLAVOR}-m4f"
 cmake -S "$OPUS_SRC" -B "$OPUS_BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/gcc-arm-none-eabi.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS_RELEASE="$OPUS_RELEASE_FLAGS" \
   -DBUILD_SHARED_LIBS=OFF \
   -DOPUS_FIXED_POINT="$FIXED" \
   -DOPUS_DISABLE_INTRINSICS=ON \
