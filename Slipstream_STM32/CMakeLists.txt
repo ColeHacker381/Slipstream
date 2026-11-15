@@ -174,3 +174,22 @@ if(S15_G722_BENCHMARK)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S15_G722_BENCHMARK=1)
     message(STATUS "S15 G.722 isolated startup benchmark enabled")
 endif()
+
+# S16 independent Codec 2 3200bps startup-only benchmark, includes 16<->8 kHz FIR.
+option(S16_CODEC2_BENCHMARK "Run Codec2 3200 startup encode/decode+resample benchmark" OFF)
+set(S16_CODEC2_ROOT "" CACHE PATH "Upstream Codec2 checkout root")
+set(S16_CODEC2_BUILD "" CACHE PATH "Cross-built Codec2 library/build root")
+if(S16_CODEC2_BENCHMARK)
+    if(NOT EXISTS "${S16_CODEC2_ROOT}/src/codec2.h" OR
+       NOT EXISTS "${S16_CODEC2_BUILD}/src/libcodec2.a" OR
+       NOT EXISTS "${S16_CODEC2_BUILD}/codec2/version.h")
+        message(FATAL_ERROR "Run bash setup_codec2.sh and configure S16_CODEC2_ROOT/BUILD")
+    endif()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s16_codec2_bench.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        "${S16_CODEC2_ROOT}/src" "${S16_CODEC2_BUILD}")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S16_CODEC2_BENCHMARK=1)
+    target_link_libraries(${CMAKE_PROJECT_NAME} "${S16_CODEC2_BUILD}/src/libcodec2.a" m)
+    message(STATUS "S16 Codec 2 3200 mode benchmark enabled (includes FIR sample conversion)")
+endif()
