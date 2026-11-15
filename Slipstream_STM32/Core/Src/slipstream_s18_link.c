@@ -141,9 +141,7 @@ void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *h){
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *h){
  if(h->Instance==SPI3)refill(1U);
 }
-void HAL_I2S_ErrorCallback(I2S_HandleTypeDef *h){
- if(h->Instance==SPI3)st.dma_errors++;
-}
+void s18_link_i2s_error(void){st.dma_errors++;}
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *h){
  if(h->Instance!=USART2)return;
  uint8_t b=uart_rx_byte;
