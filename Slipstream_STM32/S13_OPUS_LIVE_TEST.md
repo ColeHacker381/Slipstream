@@ -34,3 +34,18 @@ Watch `[S13LIVE] ON` at startup and each subsequent S11 telemetry line with appe
 **If audio glitches or the live test cannot keep up:** this was predicted as possible by startup CPU budget (~10ms DSP + ~8.5ms Opus per 20ms); restore DSP immediately with `bash build100.sh -DS13_OPUS_LIVE_TEST=OFF -DS13_OPUS_BENCHMARK=OFF && bash flash100.sh` (or **STM32: Restore DSP-only Performance100** then **STM32: Flash Performance100**). The bench state and test warnings stay isolated on this branch. Do not increase the allowed DSP 10ms deadline: it cannot fix utilization.
 
 **Limitations:** initialization uses one-time `malloc` for Opus states; stack and heap watermarks are not yet verified. The 50-frame startup synthetic benchmark may favor silence-like compression (15-byte output); this live test records max encoded packet size and exercises the live mic, but must also be tested during sustained speech. The main-loop worker is not preemptible in foreground and is **deliberately not production-ready**.
+
+## Follow-up: isolate encode-only versus encoder+decoder load
+
+A prior C0 full encode+decode live run processed 236 frames with no queue drops, then stopped on a *DMA boundary during DSP processing* (`Late=1 B/S/I=0/0/1`, `Miss=0 DMA=0`), when maximum codec time reached 12.489 ms on live speech. The remaining CPU headroom is small and it is not yet proven that an RTOS would fix total utilization.
+
+Two VS Code tasks now explicitly select the decoder setting:
+
+1. **STM32: Build and Flash S13 Live TX-Only C0**: real post-DSP mic -> 20ms Opus **encode**, but **no decode**, and normal DSP speaker audio untouched. Boot reports `[S13LIVE] ON: TX ENCODE ONLY`. `D=0` is expected, `E` should track `P`. This identifies whether TX-only workload can sustain 15 seconds without a DSP deadline conflict. It is *not* a full-duplex pass.
+2. **STM32: Build and Flash S13 Live Stress C0**: encode **and** decode on every live frame. Boot reports `[S13LIVE] ON: 20ms live PCM -> Opus -> decode`; `E=D` should track `P`.
+
+The tasks share the Performance100 firmware build directory; always run the full **Build and Flash** task when switching variants, and verify the boot-mode banner. Both preserve `S13_OPUS_COMPLEXITY=0` and use fixed-point libopus. Terminal equivalent for TX-only: add `-DS13_OPUS_LIVE_DECODE=OFF` to the C0 live build command above; return to full workload with `-DS13_OPUS_LIVE_DECODE=ON`.
+
+Record the first ~15 seconds of logs under continuous normal speech. Compare `P,E,D,Qdrop,MaxRun,Enc,Dec,Miss,Late,B/S/I,Stop,Reason`. The difference between modes is CPU spent decoding and its uninterrupted scheduling span—not a pure increase in CPU clock or a production-grade scheduler.
+
+If the TX-only test is clean but combined fails, the next experiment is a high-priority DSP worker with lower-priority preemptible codec work, subject to careful buffer ownership and stack capacity audits. If TX-only also fails, optimize codec or DSP workload before adding an RTOS.
