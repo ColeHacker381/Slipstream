@@ -160,6 +160,7 @@
                 "--preset",
                 "Performance100",
                 "-DS13_OPUS_BENCHMARK=ON",
+                "-DS13_OPUS_LIVE_TEST=OFF",
                 "-DS13_OPUS_COMPLEXITY=5",
                 "-DS13_OPUS_INCLUDE_DIR=${workspaceFolder}/third_party/opus/include",
                 "-DS13_OPUS_LIBRARY=${workspaceFolder}/build/opus-fixed-m4f/libopus.a"
@@ -227,6 +228,7 @@
                 "--preset",
                 "Performance100",
                 "-DS13_OPUS_BENCHMARK=ON",
+                "-DS13_OPUS_LIVE_TEST=OFF",
                 "-DS13_OPUS_COMPLEXITY=0",
                 "-DS13_OPUS_INCLUDE_DIR=${workspaceFolder}/third_party/opus/include",
                 "-DS13_OPUS_LIBRARY=${workspaceFolder}/build/opus-fixed-o3-m4f/libopus.a"
