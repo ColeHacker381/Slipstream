@@ -28,6 +28,9 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#if defined(S13_OPUS_BENCHMARK) && S13_OPUS_BENCHMARK
+#include "slipstream_s13_opus_bench.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -865,6 +868,30 @@ int main(void)
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+#if defined(S13_OPUS_BENCHMARK) && S13_OPUS_BENCHMARK
+  /* Startup-only benchmark. No live audio DMA yet; baseline DSP untouched.
+     Do not interpret these numbers as proof of real-time scheduling. */
+  {
+      S13_OpusBenchResult bench = {0};
+      int ok = s13_opus_benchmark(&bench);
+      char msg[256];
+      int n = snprintf(msg, sizeof(msg),
+          "[S13] OpusBench ok=%d frames=%lu err=%lu Enc=%lu/%luus "
+          "Dec=%lu/%luus Total=%lu/%luus AvgBytes=%lu RAMenc=%lu RAMdec=%lu\\r\\n",
+          ok, (unsigned long)bench.frames, (unsigned long)bench.errors,
+          (unsigned long)bench.encode_avg_us, (unsigned long)bench.encode_max_us,
+          (unsigned long)bench.decode_avg_us, (unsigned long)bench.decode_max_us,
+          (unsigned long)bench.total_avg_us, (unsigned long)bench.total_max_us,
+          (unsigned long)bench.encoded_avg_bytes,
+          (unsigned long)bench.encoder_bytes, (unsigned long)bench.decoder_bytes);
+      if (n > 0)
+      {
+          uint16_t used = (uint16_t)(n < (int)sizeof(msg) ? n : (int)sizeof(msg) - 1);
+          HAL_UART_Transmit(&huart3, (uint8_t *)msg, used, 250);
+      }
+  }
+#endif
 
   /* Start continuous circular DMA */
   status = HAL_I2SEx_TransmitReceive_DMA(
