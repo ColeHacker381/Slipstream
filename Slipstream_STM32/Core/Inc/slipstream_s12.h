@@ -7,6 +7,8 @@ typedef struct {
     uint32_t raw_rms;
     uint32_t wind_band_rms;
     uint32_t low_ratio_pct;
+    uint32_t sub80_rms;     /* approx 20-80 Hz */
+    uint32_t mid_rms;       /* approx 200-1000 Hz */
     uint8_t wind_candidate;
 } S12_WindResult;
 
