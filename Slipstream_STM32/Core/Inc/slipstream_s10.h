@@ -16,6 +16,10 @@ typedef struct
 
 /* ESP32 H10 behavior, 16 kHz signed PCM / 160 samples per block. */
 void s10_reset(void);
+/* Optional S12.6 experiment: positive AGC gain returns faster after
+   voice ends. Pass 0 to retain original 2.0-second behavior. */
+void s10_set_fast_positive_idle(uint8_t enabled);
+uint8_t s10_fast_positive_idle_enabled(void);
 S10_AgcResult s10_process_block(const int16_t *input,
                                 int16_t *output,
                                 uint32_t samples,
