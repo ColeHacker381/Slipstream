@@ -8,8 +8,13 @@ if [[ ! -f "$ELF" ]]; then
   echo "Missing $ELF. Build with: bash build100.sh" >&2
   exit 1
 fi
-if command -v STM32_Programmer_CLI >/dev/null 2>&1; then
-  STM32_Programmer_CLI -c port=SWD -w "$ELF" -v -rst
+PROGRAMMER="$(command -v STM32_Programmer_CLI || true)"
+if [[ -z "$PROGRAMMER" && -d "$HOME/.local/share/stm32cube/bundles/programmer" ]]; then
+  PROGRAMMER="$(find "$HOME/.local/share/stm32cube/bundles/programmer" -type f -name STM32_Programmer_CLI | sort -V | tail -1)"
+fi
+if [[ -n "$PROGRAMMER" ]]; then
+  echo "Using $PROGRAMMER"
+  "$PROGRAMMER" -c port=SWD -w "$ELF" -v -rst
 elif command -v st-flash >/dev/null 2>&1; then
   command -v arm-none-eabi-objcopy >/dev/null 2>&1 || { echo "Install arm-none-eabi-objcopy" >&2; exit 1; }
   arm-none-eabi-objcopy -O binary "$ELF" "$BIN"
