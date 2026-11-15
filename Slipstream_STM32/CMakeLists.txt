@@ -148,7 +148,8 @@ if(S14_SPEEX_BENCHMARK)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s14_speex_bench.c)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-        "${S14_SPEEX_ROOT}/include" "${S14_SPEEX_BUILD}/include")
+        "${S14_SPEEX_ROOT}/include" "${S14_SPEEX_BUILD}/include"
+        "${S14_SPEEX_BUILD}/include/speex")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         S14_SPEEX_BENCHMARK=1
         S14_SPEEX_QUALITY=${S14_SPEEX_QUALITY}
