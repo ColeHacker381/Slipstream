@@ -58,3 +58,19 @@ cc -std=c11 -Wall -Wextra -Werror -ICore/Inc tests/s13_frames_host_test.c Core/S
 ```
 
 Do not merge until codec loopback is demonstrably clean on board.
+
+## Practical commands — Performance100 and Opus test gates
+
+Run from `Slipstream_STM32/` on Fedora:
+```bash
+bash scripts/perf100.sh test       # host 10ms->20ms frame test, no target
+bash scripts/perf100.sh opus-host  # host libopus smoke (requires opus-devel)
+bash scripts/perf100.sh build      # configure and build STM32 Performance100
+bash scripts/perf100.sh flash      # flash existing Performance100 .elf
+bash scripts/perf100.sh all        # build then flash
+```
+The helper selects `STM32_Programmer_CLI` if available, otherwise `st-flash`; existing ST-LINK USART3 logging still works. These are explicit repository scripts, not user shell aliases. Does not install libraries automatically or modify local shell configuration.
+
+The native Opus smoke test at `tests/s13_opus_host_smoke.c` validates encoder and decoder **on the Fedora host**: 16kHz, 320-sample 20ms frames, VOIP, 20kbps, complexity 5, VBR=1, FEC=0, DTX=0, 512-byte maximum packet, with continuous encoding and decoding even for silence. Install native development files with `sudo dnf install opus-devel pkgconf-pkg-config` when missing. Native host results **must not be interpreted as Cortex-M4 timing or RAM validation**.
+
+Target benchmark, **not implemented yet**: after a real ARM Opus library is linked, record 20ms-frame encode/decode average + maximum cycles using DWT CYCCNT, convert to microseconds at SystemCoreClock; report codec state memory and stack peak; monitor the existing 10ms `Proc/Max/Miss/Late/DMA` continuously. At 100MHz 20ms has ~2,000,000 CPU cycles total, but Opus work must be scheduled without blocking or racing the 10ms DMA deadline. Complexity 5 is first, then deliberately benchmark complexity 3, 1, 0 only if necessary. It is not safe to run an unbounded blocking Opus call in `s7_process_half`. Full Opus audio loopback remains pending.
