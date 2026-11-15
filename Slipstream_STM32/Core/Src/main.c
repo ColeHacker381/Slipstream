@@ -28,6 +28,9 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#if defined(S14_SPEEX_BENCHMARK) && S14_SPEEX_BENCHMARK
+#include "slipstream_s14_speex_bench.h"
+#endif
 #if defined(S13_OPUS_BENCHMARK) && S13_OPUS_BENCHMARK
 #include "slipstream_s13_opus_bench.h"
 #if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
@@ -954,6 +957,34 @@ int main(void)
       const char *msg = "[S13LIVE] ON: TX ENCODE ONLY, live 20ms PCM (speaker bypass); auto-stop on misses\r\n";
 #endif
       HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), 100);
+  }
+#endif
+
+#if defined(S14_SPEEX_BENCHMARK) && S14_SPEEX_BENCHMARK
+  /* S14 isolated startup benchmark, before DMA; no live DSP interference. */
+  {
+      S14_SpeexBenchResult bench = {0};
+      int ok = s14_speex_benchmark(&bench);
+      char msg[256];
+      int n = snprintf(msg, sizeof(msg),
+          "[S14] SpeexBench Q=%d C=%d ok=%d frames=%lu err=%lu Rate=%lu "
+          "Enc=%lu/%luus Dec=%lu/%luus Total=%lu/%luus "
+          "AvgBytes=%lu MaxBytes=%lu Frame=%lu\r\n",
+          S14_SPEEX_QUALITY, S14_SPEEX_COMPLEXITY, ok,
+          (unsigned long)bench.frames, (unsigned long)bench.errors,
+          (unsigned long)bench.target_bitrate,
+          (unsigned long)bench.encode_avg_us,
+          (unsigned long)bench.encode_max_us,
+          (unsigned long)bench.decode_avg_us,
+          (unsigned long)bench.decode_max_us,
+          (unsigned long)bench.total_avg_us,
+          (unsigned long)bench.total_max_us,
+          (unsigned long)bench.packet_avg_bytes,
+          (unsigned long)bench.packet_max_bytes,
+          (unsigned long)bench.frame_samples);
+      if(n>0)
+          HAL_UART_Transmit(&huart3, (uint8_t*)msg,
+              (uint16_t)(n<(int)sizeof(msg)?n:(int)sizeof(msg)-1), 250);
   }
 #endif
 
