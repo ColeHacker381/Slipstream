@@ -45,10 +45,9 @@ if [[ "$mode" == "flash" || "$mode" == "all" ]]; then
     STM32_Programmer_CLI -c port=SWD -w "$elf" -v -rst
   elif command -v st-flash >/dev/null; then
     bin="build/Performance100/Slipstream_STM32.bin"
-    if [[ ! -f "$bin" ]]; then
-      command -v arm-none-eabi-objcopy >/dev/null || { echo "Missing arm-none-eabi-objcopy" >&2; exit 1; }
-      arm-none-eabi-objcopy -O binary "$elf" "$bin"
-    fi
+    command -v arm-none-eabi-objcopy >/dev/null || { echo "Missing arm-none-eabi-objcopy" >&2; exit 1; }
+    # Always regenerate: a previously built .bin may belong to an older branch.
+    arm-none-eabi-objcopy -O binary "$elf" "$bin"
     st-flash --reset write "$bin" 0x08000000
   else
     echo "No flashing tool found. Install STM32_Programmer_CLI or st-flash." >&2
