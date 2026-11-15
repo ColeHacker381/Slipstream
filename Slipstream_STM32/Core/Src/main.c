@@ -931,7 +931,7 @@ int main(void)
                 sizeof(s8_uart_report),
                 "[S8.1] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
-                "ClipD/F/O=%lu/%lu/%lu "
+                "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
                 "Miss=%lu Late=%lu B/S/I=%lu/%lu/%lu C=%lu "
                 "DMA=%lu Uskip=%lu\\r\\n",
@@ -944,6 +944,7 @@ int main(void)
                 (unsigned long)s7_output_peak,
                 (unsigned long)s8_dec_clip,
                 (unsigned long)s8_filter_clip,
+                (unsigned long)s8_clipped_samples(),
                 (unsigned long)s8_output_clip,
                 (unsigned long)processing_us,
                 (unsigned long)max_processing_us,
