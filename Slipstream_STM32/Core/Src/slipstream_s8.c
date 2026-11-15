@@ -29,11 +29,12 @@ static float s8_noise[S8_BINS];
 static float s8_gain[S8_BINS];
 static uint32_t s8_frames = 0U;
 static uint32_t s8_initialized = 0U;
+static uint32_t s8_pcm_clips = 0U;
 
 static int16_t s8_saturate(float x)
 {
-    if (x > 32767.0f) return 32767;
-    if (x < -32768.0f) return -32768;
+    if (x > 32767.0f) { s8_pcm_clips++; return 32767; }
+    if (x < -32768.0f) { s8_pcm_clips++; return -32768; }
     return (int16_t)x;
 }
 
@@ -45,6 +46,7 @@ void s8_reset(void)
     memset(s8_fft, 0, sizeof(s8_fft));
     for (uint32_t i = 0; i < S8_BINS; i++) s8_gain[i] = 1.0f;
     s8_frames = 0U;
+    s8_pcm_clips = 0U;
 }
 
 int s8_init(void)
@@ -75,6 +77,11 @@ uint32_t s8_noise_ready(void)
 uint32_t s8_learning_blocks(void)
 {
     return s8_frames;
+}
+
+uint32_t s8_clipped_samples(void)
+{
+    return s8_pcm_clips;
 }
 
 void s8_process(const int16_t input[S8_BLOCK_SIZE],
