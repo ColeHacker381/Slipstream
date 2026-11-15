@@ -14,4 +14,5 @@ void s18_link_push(const int16_t *pcm160);
 void s18_link_run_one(void);
 void s18_link_service(void);
 void s18_link_get_stats(S18_LinkStats *out);
+void s18_link_i2s_error(void);
 #endif
