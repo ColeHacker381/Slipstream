@@ -107,6 +107,12 @@ if(S13_OPUS_BENCHMARK)
         "${S13_OPUS_INCLUDE_DIR}")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         S13_OPUS_BENCHMARK=1 S13_OPUS_COMPLEXITY=${S13_OPUS_COMPLEXITY})
-    target_link_libraries(${CMAKE_PROJECT_NAME} "${S13_OPUS_LIBRARY}")
+    # GNU ld resolves static archives left-to-right. CubeMX already links -lm
+    # before this external archive, so repeat m AFTER libopus.a to resolve
+    # floor/log and other math functions referenced only by Opus.
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+        "${S13_OPUS_LIBRARY}"
+        m
+    )
     message(STATUS "S13 real Opus benchmark enabled; verify archive ABI and available SRAM")
 endif()
