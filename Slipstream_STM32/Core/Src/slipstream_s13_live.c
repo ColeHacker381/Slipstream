@@ -11,6 +11,9 @@
 #ifndef S13_OPUS_COMPLEXITY
 #define S13_OPUS_COMPLEXITY 0
 #endif
+#ifndef S13_OPUS_LIVE_DECODE
+#define S13_OPUS_LIVE_DECODE 1
+#endif
 #define S13_FRAME_SIZE 320
 #define S13_PACKET_SIZE 512
 static S13_FrameAssembler assembler;
@@ -69,10 +72,14 @@ void s13_live_run_one(void)
     if(n<=0 || n>S13_PACKET_SIZE) {stats.errors++;s13_live_stop(2);return;}
     if((uint32_t)n>stats.max_encoded_bytes) stats.max_encoded_bytes=(uint32_t)n;
     start=DWT->CYCCNT;
+    uint32_t dc=0;
+#if S13_OPUS_LIVE_DECODE
     int d=opus_decode(dec,packet,n,decoded,S13_FRAME_SIZE,0);
-    uint32_t dc=DWT->CYCCNT-start;
+    dc=DWT->CYCCNT-start;
     if(d!=S13_FRAME_SIZE) {stats.errors++;s13_live_stop(3);return;}
-    stats.encoded++;stats.decoded++;
+    stats.decoded++;
+#endif
+    stats.encoded++;
     enc_cycles_total+=ec;dec_cycles_total+=dc;
     uint32_t a=us(ec),b=us(dc);
     if(a>stats.enc_max_us) stats.enc_max_us=a;
