@@ -134,6 +134,15 @@ static volatile uint32_t s7_ready_count[2] = {0, 0};
 static uint32_t s7_done_count[2] = {0, 0};
 
 static volatile uint32_t s7_irq_blocks = 0;
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+static volatile uint32_t s13_dma_ready_cycle[2];
+static volatile uint32_t s13_dma_irq_half;
+static uint32_t s13_start_age_max, s13_end_age_max;
+static uint32_t s13_start_over_deadline, s13_end_over_deadline;
+static uint32_t s13_opposite_irq_during, s13_same_irq_during;
+static uint32_t s13_last_reject_start_us, s13_last_reject_end_us;
+static uint32_t s13_last_reject_irq_half;
+#endif
 
 static uint32_t s7_processed_blocks = 0;
 static uint32_t s7_missed_blocks = 0;
@@ -472,6 +481,15 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     uint32_t offset = half * S5_HALF_SAMPLES;
     uint32_t start_cycles = DWT->CYCCNT;
     uint32_t irq_at_start = s7_irq_blocks;
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+    /* A DMA half completes at ready_cycle and is reused starting at
+       the NEXT (opposite-half) DMA callback, ~10 ms later. */
+    uint32_t ready_cycle = s13_dma_ready_cycle[half];
+    uint32_t age_start = start_cycles - ready_cycle;
+    uint32_t half_period = SystemCoreClock / 100U;
+    if (age_start > s13_start_age_max) s13_start_age_max = age_start;
+    if (age_start >= half_period) s13_start_over_deadline++;
+#endif
 
     uint32_t input_peak = 0;
     uint32_t output_peak = 0;
@@ -696,6 +714,22 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
         elapsed >= (deadline_cycles * 95U) / 100U;
     uint32_t reject_sequence = s7_ready_count[half] != sequence;
     uint32_t reject_irq = s7_irq_blocks != irq_at_start;
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+    uint32_t age_end = DWT->CYCCNT - ready_cycle;
+    if (age_end > s13_end_age_max) s13_end_age_max = age_end;
+    if (age_end >= half_period) s13_end_over_deadline++;
+    if (reject_irq)
+    {
+        if (s13_dma_irq_half == half) s13_same_irq_during++;
+        else s13_opposite_irq_during++;
+    }
+    if (reject_budget || reject_sequence || reject_irq)
+    {
+        s13_last_reject_start_us = (uint32_t)(((uint64_t)age_start * 1000000ULL) / SystemCoreClock);
+        s13_last_reject_end_us = (uint32_t)(((uint64_t)age_end * 1000000ULL) / SystemCoreClock);
+        s13_last_reject_irq_half = s13_dma_irq_half;
+    }
+#endif
     if (reject_budget || reject_sequence || reject_irq)
     {
         s8_reject_budget += reject_budget;
@@ -1211,7 +1245,9 @@ int main(void)
                     (size_t)(remaining + 2),
                     " [S13LIVE] P=%lu E=%lu D=%lu Qdrop=%lu Qhi=%lu "
                     "Enc=%lu/%lu Dec=%lu/%lu MaxRun=%lu Bmax=%lu "
-                    "Err=%lu Stop=%lu Reason=%lu\r\n",
+                    "Err=%lu Stop=%lu Reason=%lu "
+                    "DMAAGE=%lu/%luus Over=%lu/%lu "
+                    "IRQcross=%lu/%lu RejectAge=%lu/%luus IRQhalf=%lu\r\n",
                     (unsigned long)st.produced,
                     (unsigned long)st.encoded,
                     (unsigned long)st.decoded,
@@ -1225,7 +1261,16 @@ int main(void)
                     (unsigned long)st.max_encoded_bytes,
                     (unsigned long)st.errors,
                     (unsigned long)st.stopped,
-                    (unsigned long)st.stop_reason);
+                    (unsigned long)st.stop_reason,
+                    (unsigned long)((uint64_t)s13_start_age_max * 1000000ULL / SystemCoreClock),
+                    (unsigned long)((uint64_t)s13_end_age_max * 1000000ULL / SystemCoreClock),
+                    (unsigned long)s13_start_over_deadline,
+                    (unsigned long)s13_end_over_deadline,
+                    (unsigned long)s13_opposite_irq_during,
+                    (unsigned long)s13_same_irq_during,
+                    (unsigned long)s13_last_reject_start_us,
+                    (unsigned long)s13_last_reject_end_us,
+                    (unsigned long)s13_last_reject_irq_half);
                 if (added > 0) len = len - 2 + added;
             }
 #endif
@@ -1564,6 +1609,10 @@ void HAL_I2SEx_TxRxHalfCpltCallback(
         return;
 
     s5_half_count++;
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+    s13_dma_ready_cycle[0] = DWT->CYCCNT;
+    s13_dma_irq_half = 0U;
+#endif
     s7_ready_count[0]++;
     s7_irq_blocks++;
 }
@@ -1578,6 +1627,10 @@ void HAL_I2SEx_TxRxCpltCallback(
         return;
 
     s5_full_count++;
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+    s13_dma_ready_cycle[1] = DWT->CYCCNT;
+    s13_dma_irq_half = 1U;
+#endif
     s7_ready_count[1]++;
     s7_irq_blocks++;
 }
