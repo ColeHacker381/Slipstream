@@ -19,5 +19,6 @@ void s8_process(const int16_t input[S8_BLOCK_SIZE],
 /* Noise estimator becomes ready after 50 successful input blocks. */
 uint32_t s8_noise_ready(void);
 uint32_t s8_learning_blocks(void);
+uint32_t s8_clipped_samples(void); /* Cumulative post-IFFT PCM clamps */
 
 #endif
