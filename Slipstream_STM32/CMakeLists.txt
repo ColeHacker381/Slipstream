@@ -55,6 +55,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s9.c
     ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s10.c
     ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s11.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s12.c
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/TransformFunctions/arm_cfft_f32.c
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/TransformFunctions/arm_cfft_radix8_f32.c
     ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Source/TransformFunctions/arm_bitreversal2.c
