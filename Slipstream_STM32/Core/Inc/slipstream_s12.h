@@ -28,5 +28,13 @@ void s12_suppress_16k(const int16_t *input, int16_t *output,
                      uint32_t frames, uint8_t enable, uint8_t mid_enable);
 S12_SuppressStats s12_suppress_stats(void);
 void s12_suppress_clear_interval(void);
+/* RMS in int16 PCM units, caller averages across wind-active blocks. */
+uint32_t s12_pcm_rms(const int16_t *input, uint32_t frames);
+/* Optional S12.5 AGC experiment, AFTER unchanged S10.
+   Slowly counteracts only positive gain while wind state is active. */
+void s12_wind_gain_guard(int16_t *samples, uint32_t frames,
+                         float agc_gain_db, uint8_t wind_active,
+                         uint8_t enable);
+uint32_t s12_guard_reduction_db10(void);
 S12_WindResult s12_analyze_raw_48k(const float *pcm, uint32_t frames);
 #endif
