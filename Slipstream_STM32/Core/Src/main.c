@@ -28,6 +28,7 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#include "slipstream_s12.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -95,6 +96,11 @@ static void MX_I2S2_Init(void);
 #define S9_ENABLED 1 /* 0 = VAD bypass, 1 = classify cleaned audio; never gate playback */
 #define S10_ENABLED 1 /* 0 = S9 baseline, 1 = VAD-aware ESP32 AGC */
 #define S11_ENABLED 1 /* 0 = S10 bypass, 1 = original ESP32 H11 lookahead limiter */
+#define S12_DIAGNOSTICS 1 /* Raw wind features and AGC motion telemetry */
+#define S12_SUPPRESSION 1 /* 0 = exact S12.2 audio bypass */
+#define S12_MID_SUPPRESSION 1 /* 0 = S12.3 low-only; 1 = S12.4 experimental 220-1400 Hz band */
+#define S12_WIND_AGC_GUARD 0 /* S12.5: set 1 to test positive-gain compensation; 0=original AGC */
+#define S12_FAST_AGC_TAIL 1 /* S12.6: 0 = original 2s idle, 1 = 0.5s for positive gain */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -153,7 +159,7 @@ static uint32_t s8_max_committed_cycles = 0U;
 static uint32_t s8_uart_skipped = 0U;
 
 /* The UART HAL uses this buffer until interrupt-driven TX completes. */
-static uint8_t s8_uart_report[640]; /* S10 extends diagnostics beyond S9 */
+static uint8_t s8_uart_report[768]; /* S10 extends diagnostics beyond S9 */
 #if S9_ENABLED && S7_MODE == 2
 static uint32_t s9_last_cycles = 0U;
 static uint32_t s9_max_cycles = 0U;
@@ -178,6 +184,29 @@ static uint32_t s11_max_cycles = 0U;
 static uint32_t s11_hits_total = 0U;
 static uint32_t s11_clamps_total = 0U;
 static uint32_t s11_post_peak = 0U;
+#endif
+#if S12_DIAGNOSTICS && S7_MODE == 2
+static S12_WindResult s12_last_wind = {0};
+static uint32_t s12_wind_blocks = 0U;
+static uint32_t s12_max_ratio = 0U;
+static uint32_t s12_active_frames = 0U;
+static uint32_t s12_active_speech = 0U;
+static uint32_t s12_raw_max = 0U;
+static uint32_t s12_sum_low = 0U;
+static uint32_t s12_sum_mid = 0U;
+static uint32_t s12_sum_ratio = 0U;
+static uint32_t s12_wind_state_blocks = 0U;
+static uint32_t s12_suppress_last_cycles = 0U;
+static uint32_t s12_suppress_max_cycles = 0U;
+static int16_t s12_suppressed_16k[S7_VOICE_SAMPLES];
+static uint32_t s12_level_blocks = 0U;
+static uint32_t s12_pre_sum = 0U;
+static uint32_t s12_post_sum = 0U;
+static uint32_t s12_agc_sum = 0U;
+static uint32_t s12_guard_sum = 0U;
+static uint32_t s12_agc_boost_blocks = 0U;
+static int32_t s12_max_gain_step10 = 0;
+static float s12_previous_gain = 0.0f;
 #endif
 
 
@@ -486,6 +515,23 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
         if (magnitude > input_peak)
             input_peak = magnitude;
     }
+#if S12_DIAGNOSTICS && S7_MODE == 2
+    /* Before 100 Hz HPF: preserves wind and handling rumble information. */
+    s12_last_wind = s12_analyze_raw_48k(s7_input_48k, S5_FRAMES_PER_HALF);
+    s12_wind_blocks += s12_last_wind.wind_candidate;
+    if (s12_last_wind.low_ratio_pct > s12_max_ratio)
+        s12_max_ratio = s12_last_wind.low_ratio_pct;
+    /* One-second means over active 10 ms blocks, not the last (often silent) block. */
+    if (s12_last_wind.raw_rms >= 250U)
+    {
+        s12_active_frames++;
+        s12_sum_low += s12_last_wind.sub80_rms;
+        s12_sum_mid += s12_last_wind.mid_rms;
+        s12_sum_ratio += s12_last_wind.low_ratio_pct;
+        if (s12_last_wind.raw_rms > s12_raw_max)
+            s12_raw_max = s12_last_wind.raw_rms;
+    }
+#endif
 
 #if S7_MODE == 0
 
@@ -570,6 +616,31 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     ns_peak = voice_peak; /* By design: NS bypassed. */
 #endif
 
+#if S12_DIAGNOSTICS && S7_MODE == 2
+    /* S12.3: conservative high-pass blend only when sustained
+       wind is present; before S9 VAD/S10 AGC and after S8. */
+    /* Capture RMS before S12. Only include wind-state blocks in averages,
+       unlike one-second last-block snapshots. */
+    const uint8_t s12_measure_wind = s12_last_wind.sustained_wind;
+    const uint32_t s12_pre_rms = s12_measure_wind
+        ? s12_pcm_rms(s7_voice_16k, S7_VOICE_SAMPLES) : 0U;
+    uint32_t s12_suppress_start = DWT->CYCCNT;
+    s12_suppress_16k(s7_voice_16k, s12_suppressed_16k,
+                     S7_VOICE_SAMPLES, S12_SUPPRESSION, S12_MID_SUPPRESSION);
+    uint32_t s12_elapsed = DWT->CYCCNT - s12_suppress_start;
+    s12_suppress_last_cycles = s12_elapsed;
+    if (s12_elapsed > s12_suppress_max_cycles)
+        s12_suppress_max_cycles = s12_elapsed;
+    s12_wind_state_blocks += s12_last_wind.sustained_wind;
+    memcpy(s7_voice_16k, s12_suppressed_16k, sizeof(s7_voice_16k));
+    if (s12_measure_wind)
+    {
+        s12_level_blocks++;
+        s12_pre_sum += s12_pre_rms;
+        s12_post_sum += s12_pcm_rms(s7_voice_16k, S7_VOICE_SAMPLES);
+    }
+#endif
+
 #if S9_ENABLED && S7_MODE == 2
     /* ESP32 H9 VAD: cleaned pre-AGC PCM; classification only, never mute. */
     uint32_t vad_start = DWT->CYCCNT;
@@ -579,6 +650,10 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     if (vad_elapsed > s9_max_cycles) s9_max_cycles = vad_elapsed;
     s9_speech_starts += s9_last_result.speech_started;
     s9_speech_ends += s9_last_result.speech_ended;
+#if S12_DIAGNOSTICS
+    if (s12_last_wind.raw_rms >= 250U && s9_last_result.speech_active)
+        s12_active_speech++;
+#endif
 #endif
 
 #if S10_ENABLED && S7_MODE == 2
@@ -596,6 +671,29 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     s10_last_cycles = agc_elapsed;
     if (agc_elapsed > s10_max_cycles) s10_max_cycles = agc_elapsed;
     s10_clip_count += s10_last_result.clipped_samples;
+#if S12_DIAGNOSTICS
+    if (s12_measure_wind)
+    {
+        s12_agc_sum += s12_pcm_rms(s10_output_16k, S7_VOICE_SAMPLES);
+        if (s10_last_result.applied_gain_db > 0.0f)
+            s12_agc_boost_blocks++;
+    }
+    /* Guard is downstream of unchanged S10. Enabled only for explicit A/B. */
+    s12_wind_gain_guard(s10_output_16k, S7_VOICE_SAMPLES,
+                        s10_last_result.applied_gain_db,
+                        s12_last_wind.sustained_wind,
+                        S12_WIND_AGC_GUARD);
+    if (s12_measure_wind)
+        s12_guard_sum += s12_pcm_rms(s10_output_16k, S7_VOICE_SAMPLES);
+#endif
+#if S12_DIAGNOSTICS
+    /* Absolute gain step per 10 ms block; observational only. */
+    float dg = s10_last_result.applied_gain_db - s12_previous_gain;
+    if (dg < 0.0f) dg = -dg;
+    int32_t dg10 = (int32_t)(dg * 10.0f);
+    if (dg10 > s12_max_gain_step10) s12_max_gain_step10 = dg10;
+    s12_previous_gain = s10_last_result.applied_gain_db;
+#endif
     memcpy(s7_voice_16k, s10_output_16k, sizeof(s7_voice_16k));
 #endif
 
@@ -824,10 +922,16 @@ int main(void)
 
 #if S10_ENABLED && S7_MODE == 2
   s10_reset();
+  s10_set_fast_positive_idle(S12_FAST_AGC_TAIL);
 #endif
 
 #if S11_ENABLED && S7_MODE == 2
   s11_reset();
+#endif
+
+#if S12_DIAGNOSTICS && S7_MODE == 2
+  s12_reset();
+  s12_previous_gain = 0.0f;
 #endif
 
   /* Initialize ARM CMSIS-DSP filters */
@@ -1065,12 +1169,58 @@ int main(void)
         limiter_clamps = s11_clamps_total;
         limiter_post_peak = s11_post_peak;
 #endif
+        uint32_t wind_raw = 0U, wind_band = 0U, wind_ratio = 0U;
+        uint32_t wind_blocks = 0U, wind_max_ratio = 0U;
+        uint32_t wind_active = 0U, wind_speech = 0U;
+        uint32_t wind_raw_max = 0U, wind_low_mean = 0U, wind_mid_mean = 0U;
+        uint32_t wind_ratio_mean = 0U;
+        uint32_t wind_state_blocks = 0U, suppress_mix = 0U, suppress_mid = 0U;
+        uint32_t suppress_us = 0U, suppress_max_us = 0U;
+        uint32_t wind_levels = 0U, pre_rms_mean = 0U, post_rms_mean = 0U;
+        uint32_t agc_rms_mean = 0U, guard_rms_mean = 0U;
+        uint32_t agc_boost_count = 0U, guard_db10 = 0U;
+        int32_t gain_step10 = 0;
+#if S12_DIAGNOSTICS && S7_MODE == 2
+        wind_raw = s12_last_wind.raw_rms;
+        wind_band = s12_last_wind.wind_band_rms;
+        wind_ratio = s12_last_wind.low_ratio_pct;
+        wind_blocks = s12_wind_blocks;
+        wind_max_ratio = s12_max_ratio;
+        wind_active = s12_active_frames;
+        wind_speech = s12_active_speech;
+        wind_raw_max = s12_raw_max;
+        if (s12_active_frames > 0U)
+        {
+            wind_low_mean = s12_sum_low / s12_active_frames;
+            wind_mid_mean = s12_sum_mid / s12_active_frames;
+            wind_ratio_mean = s12_sum_ratio / s12_active_frames;
+        }
+        gain_step10 = s12_max_gain_step10;
+        wind_state_blocks = s12_wind_state_blocks;
+        suppress_mix = s12_suppress_stats().last_mix_pct;
+        suppress_mid = s12_suppress_stats().last_mid_pct;
+        wind_levels = s12_level_blocks;
+        agc_boost_count = s12_agc_boost_blocks;
+        guard_db10 = s12_guard_reduction_db10();
+        if (s12_level_blocks > 0U)
+        {
+            pre_rms_mean = s12_pre_sum / s12_level_blocks;
+            post_rms_mean = s12_post_sum / s12_level_blocks;
+            agc_rms_mean = s12_agc_sum / s12_level_blocks;
+            guard_rms_mean = s12_guard_sum / s12_level_blocks;
+        }
+        if (SystemCoreClock != 0U)
+        {
+            suppress_us = (uint32_t)((uint64_t)s12_suppress_last_cycles * 1000000ULL / SystemCoreClock);
+            suppress_max_us = (uint32_t)((uint64_t)s12_suppress_max_cycles * 1000000ULL / SystemCoreClock);
+        }
+#endif
         if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
         {
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S11] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S12.6] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
@@ -1080,7 +1230,11 @@ int main(void)
                 "Lvl10=%ld Noise10=%ld Start=%lu End=%lu "
                 "AGC=%lu/%lu Gain10=%ld Ain10=%ld Aout10=%ld AClip=%lu "
                 "LIM=%lu/%lu Lin10=%ld Lout10=%ld GR10=%ld "
-                "Hits=%lu Clamp=%lu LPeak=%lu\r\n",
+                "Hits=%lu Clamp=%lu LPeak=%lu "
+                "WRMS=%lu WBand=%lu WRatio=%lu WMax=%lu WBlocks=%lu GStep10=%ld "
+                "WAct=%lu WSp=%lu WRawMax=%lu WLo=%lu WMid=%lu WRAvg=%lu "
+                "WState=%lu WBlend=%lu WMidMix=%lu SUP=%lu/%lu "
+                "WL=%lu Pre=%lu Post=%lu AGCR=%lu GuardR=%lu Boost=%lu Guard10=%lu Tail=%u\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1126,7 +1280,32 @@ int main(void)
                 (long)limiter_reduction_tenths,
                 (unsigned long)limiter_hits,
                 (unsigned long)limiter_clamps,
-                (unsigned long)limiter_post_peak
+                (unsigned long)limiter_post_peak,
+                (unsigned long)wind_raw,
+                (unsigned long)wind_band,
+                (unsigned long)wind_ratio,
+                (unsigned long)wind_max_ratio,
+                (unsigned long)wind_blocks,
+                (long)gain_step10,
+                (unsigned long)wind_active,
+                (unsigned long)wind_speech,
+                (unsigned long)wind_raw_max,
+                (unsigned long)wind_low_mean,
+                (unsigned long)wind_mid_mean,
+                (unsigned long)wind_ratio_mean,
+                (unsigned long)wind_state_blocks,
+                (unsigned long)suppress_mix,
+                (unsigned long)suppress_mid,
+                (unsigned long)suppress_us,
+                (unsigned long)suppress_max_us,
+                (unsigned long)wind_levels,
+                (unsigned long)pre_rms_mean,
+                (unsigned long)post_rms_mean,
+                (unsigned long)agc_rms_mean,
+                (unsigned long)guard_rms_mean,
+                (unsigned long)agc_boost_count,
+                (unsigned long)guard_db10,
+                (unsigned)s10_fast_positive_idle_enabled()
             );
             if (len > 0)
             {
@@ -1141,6 +1320,26 @@ int main(void)
         }
         else s8_uart_skipped++;
 
+#if S12_DIAGNOSTICS && S7_MODE == 2
+        s12_wind_blocks = 0U;
+        s12_max_ratio = 0U;
+        s12_max_gain_step10 = 0;
+        s12_active_frames = 0U;
+        s12_active_speech = 0U;
+        s12_raw_max = 0U;
+        s12_sum_low = 0U;
+        s12_sum_mid = 0U;
+        s12_sum_ratio = 0U;
+        s12_wind_state_blocks = 0U;
+        s12_suppress_max_cycles = 0U;
+        s12_suppress_clear_interval();
+        s12_level_blocks = 0U;
+        s12_pre_sum = 0U;
+        s12_post_sum = 0U;
+        s12_agc_sum = 0U;
+        s12_guard_sum = 0U;
+        s12_agc_boost_blocks = 0U;
+#endif
         s7_input_peak = 0;
         s7_output_peak = 0;
         s8_voice_peak = 0;
