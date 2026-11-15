@@ -157,3 +157,20 @@ if(S14_SPEEX_BENCHMARK)
     target_link_libraries(${CMAKE_PROJECT_NAME} "${S14_SPEEX_BUILD}/libspeex.a" m)
     message(STATUS "S14 Speex startup-only benchmark enabled")
 endif()
+
+# S15 startup-only G.722 reference codec benchmark, 16kHz mono, 64kbps.
+option(S15_G722_BENCHMARK "Run G.722 startup encode/decode benchmark" OFF)
+set(S15_G722_ROOT "" CACHE PATH "Standalone G.722 source root")
+set(S15_G722_BUILD "" CACHE PATH "Standalone G.722 Cortex-M4 library directory")
+if(S15_G722_BENCHMARK)
+    if(NOT EXISTS "${S15_G722_ROOT}/src/g722.h" OR
+       NOT EXISTS "${S15_G722_BUILD}/libg722.a")
+       message(FATAL_ERROR "S15 requires bash setup_g722.sh and source/archive paths")
+    endif()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s15_g722_bench.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${S15_G722_ROOT}/src")
+    target_link_libraries(${CMAKE_PROJECT_NAME} "${S15_G722_BUILD}/libg722.a")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S15_G722_BENCHMARK=1)
+    message(STATUS "S15 G.722 isolated startup benchmark enabled")
+endif()
