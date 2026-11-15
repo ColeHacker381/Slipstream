@@ -186,7 +186,8 @@ if(S16_CODEC2_BENCHMARK)
         message(FATAL_ERROR "Run bash setup_codec2.sh and configure S16_CODEC2_ROOT/BUILD")
     endif()
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s16_codec2_bench.c)
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s16_codec2_bench.c
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s16_codec2_alloc.c)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         "${S16_CODEC2_ROOT}/src" "${S16_CODEC2_BUILD}")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S16_CODEC2_BENCHMARK=1)
