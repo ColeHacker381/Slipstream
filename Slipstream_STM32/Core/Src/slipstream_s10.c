@@ -15,8 +15,10 @@
 #define S10_ATTACK_SECONDS 0.030f
 #define S10_RELEASE_SECONDS 0.400f
 #define S10_IDLE_RETURN_SECONDS 2.0f
+#define S10_FAST_POSITIVE_IDLE_SECONDS 0.5f
 
 static float current_gain_db = 0.0f;
+static uint8_t fast_positive_idle_enabled = 0U;
 
 static float clamp_gain(float x, float lo, float hi)
 {
@@ -58,6 +60,17 @@ static int16_t saturate_to_int16(float sample, uint32_t *clipped)
 void s10_reset(void)
 {
     current_gain_db = 0.0f;
+    fast_positive_idle_enabled = 0U;
+}
+
+void s10_set_fast_positive_idle(uint8_t enabled)
+{
+    fast_positive_idle_enabled = enabled ? 1U : 0U;
+}
+
+uint8_t s10_fast_positive_idle_enabled(void)
+{
+    return fast_positive_idle_enabled;
 }
 
 float s10_current_gain_db(void)
@@ -100,7 +113,8 @@ S10_AgcResult s10_process_block(const int16_t *input,
 
     float time_constant;
     if (!speech_active)
-        time_constant = S10_IDLE_RETURN_SECONDS;
+        time_constant = (fast_positive_idle_enabled && current_gain_db > 0.0f)
+            ? S10_FAST_POSITIVE_IDLE_SECONDS : S10_IDLE_RETURN_SECONDS;
     else if (target_gain_db < current_gain_db)
         time_constant = S10_ATTACK_SECONDS;
     else
