@@ -4,13 +4,23 @@
 #   bash scripts/perf100.sh flash
 #   bash scripts/perf100.sh all
 #   bash scripts/perf100.sh test
+#   bash scripts/perf100.sh opus-host
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mode="${1:-build}"
 case "$mode" in
-  build|flash|all|test) ;;
-  *) echo "Usage: bash scripts/perf100.sh {build|flash|all|test}" >&2; exit 2 ;;
+  build|flash|all|test|opus-host) ;;
+  *) echo "Usage: bash scripts/perf100.sh {build|flash|all|test|opus-host}" >&2; exit 2 ;;
 esac
+
+if [[ "$mode" == "opus-host" ]]; then
+  command -v pkg-config >/dev/null || { echo "Install pkg-config and libopus development package" >&2; exit 1; }
+  pkg-config --exists opus || { echo "Missing libopus development files: Fedora: sudo dnf install opus-devel pkgconf-pkg-config" >&2; exit 1; }
+  cc -O2 -Wall -Wextra -Werror tests/s13_opus_host_smoke.c \
+    $(pkg-config --cflags --libs opus) -lm -o /tmp/slipstream_s13_opus_host
+  /tmp/slipstream_s13_opus_host
+  exit 0
+fi
 
 if [[ "$mode" == "test" ]]; then
   command -v cc >/dev/null || { echo "Missing native C compiler (cc)" >&2; exit 1; }
