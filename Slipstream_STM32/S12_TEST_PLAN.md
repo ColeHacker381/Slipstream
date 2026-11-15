@@ -120,3 +120,26 @@ Build flags in `Core/Src/main.c`:
 The new `WMidMix` UART field indicates current mid blend percentage (max 45). `WBlend` keeps low frequency percent. Expect `WState>0` during strong wind, `WMidMix>0` after hysteresis. **No build/flash performed by assistant.** Retest `Proc/Max, SUP, Miss, Late, DMA, Uskip, AClip, ClipD/F/NS/O`.
 
 Listen with matched controlled source and microphone placement (the logs are not raw audio recordings; they cannot establish actual attenuation in dB). Compare wind-only, quiet/normal speech, and speech+wind at consistent output/headset level; avoid very strong blowing into the capsule that clips its input. Pay particular attention to voiced speech muffling or pumping from 220–1400 Hz attenuation. If S12.4 doesn't sound clearly better, **do not merge**: a future candidate should investigate S8 spectral mask reuse, mic windscreen, capsule position, and upstream saturation. To quantify genuine suppression, capture raw/output PCM or provide per-band RMS before/after S12 (gain changes after S12 can obscure this).
+
+## S12.5: stage-level wind RMS and AGC compensation experiment
+
+**Reason:** S12.3/S12.4 clearly activate during wind (WBlend ~59%, WMidMix ~44%) but user reports nearly identical audible wind with on/off. Wind-only tests show VAD-positive nearly every active block, S10 often applies large **negative** gain (-6 to -12 dB), S11 often no threshold hits, and upstream occasional ClipD/F/NS. The AGC "undoes reduction" hypothesis is unproven; if S10 is reducing gain, positive-gain guard should do nothing.
+
+**New fields**, one-second arithmetic means over only blocks with sustained wind state (`WL` count). These aren't dB and aren't synchronized to the post-AGC limiter:
+- `Pre`: cleaned 16k PCM RMS immediately after S8, before S12 filtering.
+- `Post`: 16k PCM RMS after S12 suppression, immediately before S9.
+- `AGCR`: 16k PCM RMS after unchanged S10 gain, before experimental guard.
+- `GuardR`: after S12.5 optional positive-gain compensation, before S11.
+- `Boost`: number of those wind-state blocks where the unchanged S10 applied positive gain.
+- `Guard10`: applied optional compensation in tenths of a dB at last block.
+- `WL`: count of wind-state blocks being compared (up to ~100 per second).
+
+`#define S12_WIND_AGC_GUARD 0` is **default**, so hardware first measures existing S12.4 without any AGC intervention. With this default, `GuardR` should match `AGCR`, `Guard10=0`. For a meaningful comparison, examine the **ratios** `Post/Pre`, `AGCR/Post`, `GuardR/AGCR` only when `WL` is substantial; beware arithmetic means and changing wind intensity. To compare log intervals use similarly strong wind conditions and same gain/codec levels.
+
+To test guard after the observational pass, set `S12_WIND_AGC_GUARD 1` and rebuild. The independent guard runs after S10 (does not edit S10 source or state), smoothly cancels **positive** applied AGC gain only while sustained wind is detected. It never adds attenuation merely because S10 gain is negative. This keeps the underlying S10 original intact for repeatable A/B. Wind mixed with real speech may sound quieter; guard is a diagnostic experiment rather than a validated speech-preservation policy.
+
+Test three builds: A: S12_SUPPRESSION=0, S12_WIND_AGC_GUARD=0; B: S12_SUPPRESSION=1, S12_MID_SUPPRESSION=1, S12_WIND_AGC_GUARD=0; C: S12_SUPPRESSION=1, S12_MID_SUPPRESSION=1, S12_WIND_AGC_GUARD=1. Compare wind-only, speech-only, mixed speech+wind. Verify `WState, WL, Pre, Post, AGCR, GuardR, Boost, Guard10`; `Proc, Max, SUP, Late, Miss, DMA, Uskip`; upstream and final clips. If no `Boost` in wind bursts, don't expect guard improvement. If `Post<Pre` but `AGCR` rises, verify expected S10 gain and beware false attribution to AGC (strong negative gain actually attenuates). The limiter still receives whatever S10 + guard output provides.
+
+**Safety:** test at modest headphone volume. Strong air blasts cause early 16-bit saturation (`ClipD/F/NS`) that neither S12 nor S11 can undo. Consider mic windscreen and physical wind shielding in parallel.
+
+This milestone is *instrumentation + optional gain guard*, not adaptive spectral suppression. There is no new FFT. GitHub code was not locally compiled or flashed by assistant; PR remains draft.
