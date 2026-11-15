@@ -128,3 +128,31 @@ if(S13_OPUS_BENCHMARK)
     endif()
     message(STATUS "S13 real Opus benchmark enabled; verify archive ABI and available SRAM")
 endif()
+
+# S14 isolated Speex benchmark. It does not require, enable or modify Opus.
+option(S14_SPEEX_BENCHMARK "Run Speex 1.2.1 startup benchmark before audio DMA" OFF)
+set(S14_SPEEX_QUALITY 6 CACHE STRING "Speex quality 0..10")
+set(S14_SPEEX_COMPLEXITY 1 CACHE STRING "Speex complexity 0..10")
+set(S14_SPEEX_ROOT "" CACHE PATH "Speex upstream 1.2.1 source root")
+set(S14_SPEEX_BUILD "" CACHE PATH "Speex fixed Cortex-M4 build output")
+if(S14_SPEEX_BENCHMARK)
+    if(S14_SPEEX_QUALITY LESS 0 OR S14_SPEEX_QUALITY GREATER 10 OR
+       S14_SPEEX_COMPLEXITY LESS 0 OR S14_SPEEX_COMPLEXITY GREATER 10)
+        message(FATAL_ERROR "S14 Speex quality/complexity must be 0..10")
+    endif()
+    if(NOT EXISTS "${S14_SPEEX_ROOT}/include/speex/speex.h" OR
+       NOT EXISTS "${S14_SPEEX_BUILD}/include/speex/speex_config_types.h" OR
+       NOT EXISTS "${S14_SPEEX_BUILD}/libspeex.a")
+        message(FATAL_ERROR "Run bash setup_speex.sh and set S14_SPEEX_ROOT / S14_SPEEX_BUILD")
+    endif()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s14_speex_bench.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        "${S14_SPEEX_ROOT}/include" "${S14_SPEEX_BUILD}/include")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        S14_SPEEX_BENCHMARK=1
+        S14_SPEEX_QUALITY=${S14_SPEEX_QUALITY}
+        S14_SPEEX_COMPLEXITY=${S14_SPEEX_COMPLEXITY})
+    target_link_libraries(${CMAKE_PROJECT_NAME} "${S14_SPEEX_BUILD}/libspeex.a" m)
+    message(STATUS "S14 Speex startup-only benchmark enabled")
+endif()
