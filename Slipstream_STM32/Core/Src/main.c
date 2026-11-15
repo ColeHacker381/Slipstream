@@ -185,6 +185,12 @@ static uint32_t s11_post_peak = 0U;
 static S12_WindResult s12_last_wind = {0};
 static uint32_t s12_wind_blocks = 0U;
 static uint32_t s12_max_ratio = 0U;
+static uint32_t s12_active_frames = 0U;
+static uint32_t s12_active_speech = 0U;
+static uint32_t s12_raw_max = 0U;
+static uint32_t s12_sum_low = 0U;
+static uint32_t s12_sum_mid = 0U;
+static uint32_t s12_sum_ratio = 0U;
 static int32_t s12_max_gain_step10 = 0;
 static float s12_previous_gain = 0.0f;
 #endif
@@ -501,6 +507,16 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     s12_wind_blocks += s12_last_wind.wind_candidate;
     if (s12_last_wind.low_ratio_pct > s12_max_ratio)
         s12_max_ratio = s12_last_wind.low_ratio_pct;
+    /* One-second means over active 10 ms blocks, not the last (often silent) block. */
+    if (s12_last_wind.raw_rms >= 250U)
+    {
+        s12_active_frames++;
+        s12_sum_low += s12_last_wind.sub80_rms;
+        s12_sum_mid += s12_last_wind.mid_rms;
+        s12_sum_ratio += s12_last_wind.low_ratio_pct;
+        if (s12_last_wind.raw_rms > s12_raw_max)
+            s12_raw_max = s12_last_wind.raw_rms;
+    }
 #endif
 
 #if S7_MODE == 0
@@ -595,6 +611,10 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     if (vad_elapsed > s9_max_cycles) s9_max_cycles = vad_elapsed;
     s9_speech_starts += s9_last_result.speech_started;
     s9_speech_ends += s9_last_result.speech_ended;
+#if S12_DIAGNOSTICS
+    if (s12_last_wind.raw_rms >= 250U && s9_last_result.speech_active)
+        s12_active_speech++;
+#endif
 #endif
 
 #if S10_ENABLED && S7_MODE == 2
@@ -1096,6 +1116,9 @@ int main(void)
 #endif
         uint32_t wind_raw = 0U, wind_band = 0U, wind_ratio = 0U;
         uint32_t wind_blocks = 0U, wind_max_ratio = 0U;
+        uint32_t wind_active = 0U, wind_speech = 0U;
+        uint32_t wind_raw_max = 0U, wind_low_mean = 0U, wind_mid_mean = 0U;
+        uint32_t wind_ratio_mean = 0U;
         int32_t gain_step10 = 0;
 #if S12_DIAGNOSTICS && S7_MODE == 2
         wind_raw = s12_last_wind.raw_rms;
@@ -1103,6 +1126,15 @@ int main(void)
         wind_ratio = s12_last_wind.low_ratio_pct;
         wind_blocks = s12_wind_blocks;
         wind_max_ratio = s12_max_ratio;
+        wind_active = s12_active_frames;
+        wind_speech = s12_active_speech;
+        wind_raw_max = s12_raw_max;
+        if (s12_active_frames > 0U)
+        {
+            wind_low_mean = s12_sum_low / s12_active_frames;
+            wind_mid_mean = s12_sum_mid / s12_active_frames;
+            wind_ratio_mean = s12_sum_ratio / s12_active_frames;
+        }
         gain_step10 = s12_max_gain_step10;
 #endif
         if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
@@ -1110,7 +1142,7 @@ int main(void)
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S12.0] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S12.2] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
@@ -1121,7 +1153,8 @@ int main(void)
                 "AGC=%lu/%lu Gain10=%ld Ain10=%ld Aout10=%ld AClip=%lu "
                 "LIM=%lu/%lu Lin10=%ld Lout10=%ld GR10=%ld "
                 "Hits=%lu Clamp=%lu LPeak=%lu "
-                "WRMS=%lu WBand=%lu WRatio=%lu WMax=%lu WBlocks=%lu GStep10=%ld\r\n",
+                "WRMS=%lu WBand=%lu WRatio=%lu WMax=%lu WBlocks=%lu GStep10=%ld "
+                "WAct=%lu WSp=%lu WRawMax=%lu WLo=%lu WMid=%lu WRAvg=%lu\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1173,7 +1206,13 @@ int main(void)
                 (unsigned long)wind_ratio,
                 (unsigned long)wind_max_ratio,
                 (unsigned long)wind_blocks,
-                (long)gain_step10
+                (long)gain_step10,
+                (unsigned long)wind_active,
+                (unsigned long)wind_speech,
+                (unsigned long)wind_raw_max,
+                (unsigned long)wind_low_mean,
+                (unsigned long)wind_mid_mean,
+                (unsigned long)wind_ratio_mean
             );
             if (len > 0)
             {
@@ -1192,6 +1231,12 @@ int main(void)
         s12_wind_blocks = 0U;
         s12_max_ratio = 0U;
         s12_max_gain_step10 = 0;
+        s12_active_frames = 0U;
+        s12_active_speech = 0U;
+        s12_raw_max = 0U;
+        s12_sum_low = 0U;
+        s12_sum_mid = 0U;
+        s12_sum_ratio = 0U;
 #endif
         s7_input_peak = 0;
         s7_output_peak = 0;
