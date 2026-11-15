@@ -106,3 +106,17 @@ Controlled validation:
 6. Monitor `AClip` and final `ClipD/F/NS/O` independently; limiter cannot recover upstream clipping.
 
 **Do not merge PR #6 until board test and listening results are reviewed.** No hardware compile or flash performed by this GitHub workflow.
+
+## S12.4 wind-frequency band experiment (initial A/B evidence)
+
+A/B provided two full wind-only runs (S12.3 with `S12_SUPPRESSION=0` vs `1`) plus an earlier quiet tail. Both wind bursts were intense; detector often reported `WState=99`. Bypass log had `WBlend=0` as intended; enabled log `WBlend=58–59`. Subjective impression: nearly identical wind sound. Both logs show S10 often at -9 to -12 dB under strong wind and S11 `Hits=0`; these account for much of output level reduction. Bypass had upstream `ClipD/F/NS` events, and the enabled run also showed occasional upstream clipping. `Clip.../O=0` only means no **final** clipping.
+
+S12.4 **experimental** low/mid frequency reduction extends the S12.3 bypassable prototype with an additional smooth first-order approximate **220–1400 Hz** band subtraction. It is **not** FFT-based noise separation and does not guarantee preservation of voiced speech because speech and wind overlap. Maximum extra mid-band mix 45%, ~5dB locally before downstream AGC. It uses two low-pass differences at 16kHz, no second FFT or block latency, and retains S12.3 low-band blend. Both mid/low blends track state continuously even when disabled. No changes to S7–S11 sources, decoder, DMA, or codec.
+
+Build flags in `Core/Src/main.c`:
+- `S12_SUPPRESSION=0`: exact S12-bypassed PCM, independent of mid toggle.
+- `S12_SUPPRESSION=1, S12_MID_SUPPRESSION=0`: S12.3 low-only reference.
+- `S12_SUPPRESSION=1, S12_MID_SUPPRESSION=1`: S12.4 experimental low+mid reduction.
+The new `WMidMix` UART field indicates current mid blend percentage (max 45). `WBlend` keeps low frequency percent. Expect `WState>0` during strong wind, `WMidMix>0` after hysteresis. **No build/flash performed by assistant.** Retest `Proc/Max, SUP, Miss, Late, DMA, Uskip, AClip, ClipD/F/NS/O`.
+
+Listen with matched controlled source and microphone placement (the logs are not raw audio recordings; they cannot establish actual attenuation in dB). Compare wind-only, quiet/normal speech, and speech+wind at consistent output/headset level; avoid very strong blowing into the capsule that clips its input. Pay particular attention to voiced speech muffling or pumping from 220–1400 Hz attenuation. If S12.4 doesn't sound clearly better, **do not merge**: a future candidate should investigate S8 spectral mask reuse, mic windscreen, capsule position, and upstream saturation. To quantify genuine suppression, capture raw/output PCM or provide per-band RMS before/after S12 (gain changes after S12 can obscure this).
