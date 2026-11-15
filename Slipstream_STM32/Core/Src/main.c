@@ -1816,6 +1816,13 @@ void HAL_I2SEx_TxRxCpltCallback(
 void HAL_I2S_ErrorCallback(
     I2S_HandleTypeDef *hi2s)
 {
+#if defined(S18_G722_I2S_TX) && S18_G722_I2S_TX
+    if (hi2s->Instance == SPI3)
+    {
+        s18_link_i2s_error();
+        return;
+    }
+#endif
     if (hi2s->Instance != SPI2)
         return;
 
