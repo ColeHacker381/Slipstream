@@ -878,7 +878,7 @@ int main(void)
       char msg[256];
       int n = snprintf(msg, sizeof(msg),
           "[S13] OpusBench ok=%d frames=%lu err=%lu Enc=%lu/%luus "
-          "Dec=%lu/%luus Total=%lu/%luus AvgBytes=%lu RAMenc=%lu RAMdec=%lu\\r\\n",
+          "Dec=%lu/%luus Total=%lu/%luus AvgBytes=%lu RAMenc=%lu RAMdec=%lu\r\n",
           ok, (unsigned long)bench.frames, (unsigned long)bench.errors,
           (unsigned long)bench.encode_avg_us, (unsigned long)bench.encode_max_us,
           (unsigned long)bench.decode_avg_us, (unsigned long)bench.decode_max_us,
