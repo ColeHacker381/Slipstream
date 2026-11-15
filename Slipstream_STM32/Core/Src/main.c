@@ -914,7 +914,11 @@ int main(void)
       Error_Handler();
   }
   {
+#if S13_OPUS_LIVE_DECODE
       const char *msg = "[S13LIVE] ON: 20ms live PCM -> Opus -> decode (speaker bypass); auto-stop on misses\r\n";
+#else
+      const char *msg = "[S13LIVE] ON: TX ENCODE ONLY, live 20ms PCM (speaker bypass); auto-stop on misses\r\n";
+#endif
       HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), 100);
   }
 #endif
