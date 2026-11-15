@@ -49,6 +49,7 @@ void s17_g722_live_push(const int16_t *block160) {
     if(s13_frames_push(&frames,block160)) stats.produced++;
     stats.dropped=frames.dropped_oldest;
     if(frames.count>stats.queue_high)stats.queue_high=frames.count;
+    if(stats.dropped) s17_g722_live_stop(5U);
 }
 void s17_g722_live_run_one(void) {
     if(!enabled || !s13_frames_take(&frames,input))return;
