@@ -194,3 +194,24 @@ if(S16_CODEC2_BENCHMARK)
     target_link_libraries(${CMAKE_PROJECT_NAME} "${S16_CODEC2_BUILD}/src/libcodec2.a" m)
     message(STATUS "S16 Codec 2 3200 mode benchmark enabled (includes FIR sample conversion)")
 endif()
+
+# S17: sustained live post-DSP G.722 frame encoding and optional decoding.
+option(S17_G722_LIVE_TEST "Run bounded real-DMA G.722 encode/decode stress test" OFF)
+option(S17_G722_LIVE_DECODE "Decode each live frame as well as encode" ON)
+if(S17_G722_LIVE_TEST)
+    if(S13_OPUS_LIVE_TEST OR S14_SPEEX_BENCHMARK OR S16_CODEC2_BENCHMARK)
+        message(FATAL_ERROR "S17 G.722 live test must not share CPU with Opus live, Speex or Codec2 startup benchmarks")
+    endif()
+    if(NOT EXISTS "${S15_G722_ROOT}/src/g722.h" OR
+       NOT EXISTS "${S15_G722_BUILD}/libg722.a")
+        message(FATAL_ERROR "S17 requires bash setup_g722.sh and S15_G722_ROOT/BUILD")
+    endif()
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s17_g722_live.c)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${S15_G722_ROOT}/src")
+    target_link_libraries(${CMAKE_PROJECT_NAME} "${S15_G722_BUILD}/libg722.a")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        S17_G722_LIVE_TEST=1
+        S17_G722_LIVE_DECODE=$<BOOL:${S17_G722_LIVE_DECODE}>)
+    message(WARNING "S17 G.722 live stress test enabled: auto-stop on first missed audio deadline, not production-safe")
+endif()
