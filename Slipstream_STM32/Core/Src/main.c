@@ -30,6 +30,9 @@
 #include "slipstream_s11.h"
 #if defined(S13_OPUS_BENCHMARK) && S13_OPUS_BENCHMARK
 #include "slipstream_s13_opus_bench.h"
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+#include "slipstream_s13_live.h"
+#endif
 #endif
 /* USER CODE END Includes */
 
@@ -621,6 +624,12 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     memcpy(s7_voice_16k, s11_output_16k, sizeof(s7_voice_16k));
 #endif
 
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+    /* Feed every real post-DSP 10ms block, including silence.
+       Decoded audio is intentionally NOT played in this stress test. */
+    s13_live_push(s7_voice_16k);
+#endif
+
     /*
      * Match ESP32's 16-bit voice input into
      * the interpolation stage.
@@ -893,6 +902,19 @@ int main(void)
   }
 #endif
 
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+  if (!s13_live_init())
+  {
+      const char *msg = "[S13LIVE] initialization failed; halting without DMA\r\n";
+      HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), 100);
+      Error_Handler();
+  }
+  {
+      const char *msg = "[S13LIVE] ON: 20ms live PCM -> Opus -> decode (speaker bypass); auto-stop on misses\r\n";
+      HAL_UART_Transmit(&huart3, (uint8_t *)msg, strlen(msg), 100);
+  }
+#endif
+
   /* Start continuous circular DMA */
   status = HAL_I2SEx_TransmitReceive_DMA(
       &hi2s2,
@@ -985,6 +1007,22 @@ int main(void)
 
         processed_this_iteration++;
     }
+
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+    /* Prioritize DSP DMA completion. Run at most one full Opus frame in
+       the remaining foreground time; this deliberately tests whether
+       the single-core scheduling is viable rather than pretending it is.
+       Stop after first Miss/Late/DMA error or after 15 seconds.
+       This test does not inject decoded samples into headphones. */
+    if (s7_missed_blocks != 0U || s7_deadline_misses != 0U ||
+        s5_dma_errors != 0U)
+        s13_live_stop(1U);
+    else if (HAL_GetTick() >= 15000U)
+        s13_live_stop(4U);
+    else if (s7_ready_count[0] == s7_done_count[0] &&
+             s7_ready_count[1] == s7_done_count[1])
+        s13_live_run_one();
+#endif
 
     /*
     * UART report once per HAL second.
@@ -1155,6 +1193,34 @@ int main(void)
                 (unsigned long)limiter_clamps,
                 (unsigned long)limiter_post_peak
             );
+#if defined(S13_OPUS_LIVE_TEST) && S13_OPUS_LIVE_TEST
+            if (len > 0 && len < (int)sizeof(s8_uart_report) - 1)
+            {
+                S13_LiveStats st;
+                s13_live_get_stats(&st);
+                int remaining = (int)sizeof(s8_uart_report) - len;
+                int added = snprintf((char *)s8_uart_report + len - 2,
+                    (size_t)(remaining + 2),
+                    " [S13LIVE] P=%lu E=%lu D=%lu Qdrop=%lu Qhi=%lu "
+                    "Enc=%lu/%lu Dec=%lu/%lu MaxRun=%lu Bmax=%lu "
+                    "Err=%lu Stop=%lu Reason=%lu\r\n",
+                    (unsigned long)st.produced,
+                    (unsigned long)st.encoded,
+                    (unsigned long)st.decoded,
+                    (unsigned long)st.dropped,
+                    (unsigned long)st.high_water,
+                    (unsigned long)st.enc_avg_us,
+                    (unsigned long)st.enc_max_us,
+                    (unsigned long)st.dec_avg_us,
+                    (unsigned long)st.dec_max_us,
+                    (unsigned long)st.max_run_us,
+                    (unsigned long)st.max_encoded_bytes,
+                    (unsigned long)st.errors,
+                    (unsigned long)st.stopped,
+                    (unsigned long)st.stop_reason);
+                if (added > 0) len = len - 2 + added;
+            }
+#endif
             if (len > 0)
             {
                 uint16_t tx_len = (uint16_t)(
