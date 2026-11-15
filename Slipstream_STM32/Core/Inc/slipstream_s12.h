@@ -17,14 +17,15 @@ typedef struct {
     uint32_t filtered_blocks;
     uint32_t active_blocks;
     uint32_t last_mix_pct; /* 0..60, blended post-S8 high-pass */
+    uint32_t last_mid_pct; /* 0..45, 200-1400 Hz attenuating mix */
 } S12_SuppressStats;
 
 void s12_reset(void);
 void s12_suppress_reset(void);
-/* Applies optional wind-selective 220 Hz first-order highpass blend.
+/* Applies optional wind-selective low and mid-band attenuation.
    Input must be 160-sample, 16 kHz mono, after S8 and before S9. */
 void s12_suppress_16k(const int16_t *input, int16_t *output,
-                     uint32_t frames, uint8_t enable);
+                     uint32_t frames, uint8_t enable, uint8_t mid_enable);
 S12_SuppressStats s12_suppress_stats(void);
 void s12_suppress_clear_interval(void);
 S12_WindResult s12_analyze_raw_48k(const float *pcm, uint32_t frames);
