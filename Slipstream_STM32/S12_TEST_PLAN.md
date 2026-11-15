@@ -86,3 +86,23 @@ Existing `WRMS`/`WRatio` remain **last-block snapshots**, not one-second means.
 No PCM change, no VAD/AGC change, no adaptive suppression and no new wind decision threshold. This is an engineering investigation and **must stay draft**.
 
 **Test:** build and flash Performance100; log separated 10-second groups for quiet no speech, quiet voice, normal voice, loud voice, 3× wind-only bursts, and speech+wind. Label start/end or provide log sections. Watch CPU `Proc/Max` (pre-S12.2 max ~5.28ms) and `Late/Miss/DMA/Uskip` (must stay zero). Compare `WLo/WMid` and `WSp/WAct` across matched groups rather than accepting a class decision from the old ratio. Do not build suppressor logic until the features distinguish conditions, especially **speech+wind**.
+
+## S12.3 conservative wind-suppression prototype — hardware test pending
+
+**This is the first S12 version that changes audible PCM when enabled.** Original S7, S8, S9, S10 and S11 algorithms are unchanged; a separately bypassable S12 processing step is inserted **after S8 and before S9**, operating at 16k mono/160 samples per block. The raw wind feature detector runs before S7's HPF.
+
+Build with `#define S12_SUPPRESSION 1` for experiment; set to `0` for exact S12.2 audio (suppression remains internally running as a detector/state comparison but output int16 PCM is copied unchanged). Retain `S12_DIAGNOSTICS=1` for this experiment.
+
+**Prototype behavior and limitations:** A separate sustained wind criterion, raw mic RMS >=1100 PCM and approximate 20–80 Hz RMS >=170 PCM units, must hold 25 successive 10ms blocks (~250ms). Wind state stays active up to 45 blocks (~450ms) after criterion ceases. The signal is blended with a first-order ~220Hz high-pass at up to 60% mix, smoothed via `blend += .035*(target-blend)` per block; normal speech remains mixed in. This is **not** broadband noise cancellation, and strong wind energy in the 200–1000 Hz band will remain audible. Conditions are a conservative starting point, not calibrated classification. During a false positive, it may reduce low fundamentals of voices. No speech-muting, no all-band AGC attenuation, and no changes to existing S10 timing/coefficient parameters.
+
+New UART fields appended: `WState` = number of 10ms blocks in sustained wind state per reporting interval; `WBlend` = most recent blend percentage [0, 60]; `SUP=a/b` = latest and interval-max suppression processing microseconds. Old `WBlocks` remains the original 60%-ratio experimental flag and is *not* the S12.3 decision. `WAct/WSp/WLo/WMid/WRAvg` remain.
+
+Controlled validation:
+1. Compile Performance100, flash Nucleo, verify zero `Late/Miss/DMA/Uskip`, log `Proc Max SUP`.
+2. Listen to wind-only for 10–15s with `S12_SUPPRESSION=1`. Look for `WState>0`, `WBlend` rising and lower perceived wind rumble; do not expect broadband gusts to disappear.
+3. Listen to quiet/normal/loud voice only with suppression on. `WState` should usually be zero and `WBlend=0`, with no altered vowels or pumping.
+4. Compare same wind and voice tests with `S12_SUPPRESSION=0` (rebuild/flash). Because algorithm runs but copies PCM unchanged on bypass, this isolates audio effects rather than CPU effects.
+5. Test speech *during* airflow; avoid losing intelligibility. If voice is affected noticeably, lower blend or increase sustained-wind threshold rather than masking the mic.
+6. Monitor `AClip` and final `ClipD/F/NS/O` independently; limiter cannot recover upstream clipping.
+
+**Do not merge PR #6 until board test and listening results are reviewed.** No hardware compile or flash performed by this GitHub workflow.
