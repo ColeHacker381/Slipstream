@@ -88,6 +88,10 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 # S13 genuine libopus is an explicit external ARM source/static-library input.
 # No ESP32 prebuilt library is linked and no fake codec fallback is provided.
 option(S13_OPUS_BENCHMARK "Run real Opus startup benchmark before I2S DMA" OFF)
+option(S13_OPUS_LIVE_TEST "Opt-in sustained live DSP + Opus stress test (no decoded playback)" OFF)
+if(S13_OPUS_LIVE_TEST AND NOT S13_OPUS_BENCHMARK)
+    message(FATAL_ERROR "S13_OPUS_LIVE_TEST requires S13_OPUS_BENCHMARK=ON (real library)")
+endif()
 set(S13_OPUS_COMPLEXITY 5 CACHE STRING "Opus encoder complexity for benchmarking (0..10)")
 if(S13_OPUS_COMPLEXITY LESS 0 OR S13_OPUS_COMPLEXITY GREATER 10)
     message(FATAL_ERROR "S13_OPUS_COMPLEXITY must be between 0 and 10")
@@ -114,5 +118,11 @@ if(S13_OPUS_BENCHMARK)
         "${S13_OPUS_LIBRARY}"
         m
     )
+    if(S13_OPUS_LIVE_TEST)
+        target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s13_live.c)
+        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S13_OPUS_LIVE_TEST=1)
+        message(WARNING "S13 LIVE stress test is enabled; may drop audio blocks. NOT production-safe.")
+    endif()
     message(STATUS "S13 real Opus benchmark enabled; verify archive ABI and available SRAM")
 endif()
