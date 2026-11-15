@@ -466,6 +466,51 @@
             "dependsOrder": "sequence",
             "problemMatcher": [],
             "group": "build"
+        },
+        {
+            "label": "STM32: Build Codec2 library",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "setup_codec2.sh"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "STM32: Build S16 Codec2 3200 Benchmark",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "build100.sh",
+                "-DS13_OPUS_BENCHMARK=OFF",
+                "-DS13_OPUS_LIVE_TEST=OFF",
+                "-DS14_SPEEX_BENCHMARK=OFF",
+                "-DS15_G722_BENCHMARK=OFF",
+                "-DS16_CODEC2_BENCHMARK=ON",
+                "-DS16_CODEC2_ROOT=${workspaceFolder}/third_party/codec2",
+                "-DS16_CODEC2_BUILD=${workspaceFolder}/build/codec2-m4f"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "STM32: Build Codec2 library",
+            "dependsOrder": "sequence",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "STM32: Build and Flash S16 Codec2 3200 Benchmark",
+            "dependsOn": [
+                "STM32: Build S16 Codec2 3200 Benchmark",
+                "STM32: Flash Performance100"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": "build"
         }
     ]
 }
