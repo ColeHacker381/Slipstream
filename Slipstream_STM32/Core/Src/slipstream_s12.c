@@ -33,12 +33,19 @@ static float lp1000 = 0.0f;
 #define S12_MAX_BLEND 0.60f
 #define S12_BLEND_ALPHA 0.035f /* ~280 ms / block */
 #define S12_HP_ALPHA 0.9173f /* 1/(1+2*pi*220/16000) */
+#define S12_MID_GAIN_MAX 0.45f /* <= ~5 dB 200-1400Hz band reduction */
+#define S12_MID_ALPHA_LOW 0.0829f /* 1-exp(-2*pi*220/16000) */
+#define S12_MID_ALPHA_HIGH 0.4230f /* 1-exp(-2*pi*1400/16000) */
+#define S12_MID_SMOOTH 0.035f
 static uint32_t wind_consecutive = 0U;
 static uint32_t wind_release = 0U;
 static uint8_t wind_active = 0U;
 static float hp_previous_x = 0.0f;
 static float hp_previous_y = 0.0f;
 static float blend = 0.0f;
+static float mid_lp_low = 0.0f;
+static float mid_lp_high = 0.0f;
+static float mid_blend = 0.0f;
 static S12_SuppressStats suppress_stats = {0};
 
 void s12_reset(void)
@@ -119,11 +126,14 @@ void s12_suppress_reset(void)
     hp_previous_x = 0.0f;
     hp_previous_y = 0.0f;
     blend = 0.0f;
+    mid_lp_low = 0.0f;
+    mid_lp_high = 0.0f;
+    mid_blend = 0.0f;
     suppress_stats = (S12_SuppressStats){0};
 }
 
 void s12_suppress_16k(const int16_t *input, int16_t *output,
-                     uint32_t frames, uint8_t enable)
+                     uint32_t frames, uint8_t enable, uint8_t mid_enable)
 {
     if (input == NULL || output == NULL || frames == 0U)
         return;
@@ -134,7 +144,13 @@ void s12_suppress_16k(const int16_t *input, int16_t *output,
     blend += S12_BLEND_ALPHA * (target - blend);
     if (blend < 0.0f) blend = 0.0f;
     if (blend > S12_MAX_BLEND) blend = S12_MAX_BLEND;
-    if (enable && blend >= 0.005f) suppress_stats.active_blocks++;
+    const float mid_target = (enable && mid_enable && wind_active)
+        ? S12_MID_GAIN_MAX : 0.0f;
+    mid_blend += S12_MID_SMOOTH * (mid_target - mid_blend);
+    if (mid_blend < 0.0f) mid_blend = 0.0f;
+    if (mid_blend > S12_MID_GAIN_MAX) mid_blend = S12_MID_GAIN_MAX;
+    if (enable && (blend >= 0.005f || mid_blend >= 0.005f))
+        suppress_stats.active_blocks++;
 
     /* This is intentionally NOT a hard 220Hz cutoff: unchanged
        speech is mixed back in, preserving the voice fundamentals. */
@@ -144,13 +160,20 @@ void s12_suppress_16k(const int16_t *input, int16_t *output,
         float hp = S12_HP_ALPHA * (hp_previous_y + x - hp_previous_x);
         hp_previous_x = x;
         hp_previous_y = hp;
-        float y = enable ? x + blend * (hp - x) : x;
+        /* Difference of two low-passes estimates a soft 220-1400Hz
+           band. Filter state advances even on bypass to avoid click
+           after re-enabling. No second FFT or extra delay. */
+        mid_lp_low += S12_MID_ALPHA_LOW * (x - mid_lp_low);
+        mid_lp_high += S12_MID_ALPHA_HIGH * (x - mid_lp_high);
+        const float mid = mid_lp_high - mid_lp_low;
+        float y = enable ? (x + blend * (hp - x) - mid_blend * mid) : x;
         if (y > 32767.0f) y = 32767.0f;
         if (y < -32768.0f) y = -32768.0f;
         output[i] = (int16_t)y;
     }
     suppress_stats.filtered_blocks++;
     suppress_stats.last_mix_pct = (uint32_t)(blend * 100.0f);
+    suppress_stats.last_mid_pct = (uint32_t)(mid_blend * 100.0f);
 }
 
 S12_SuppressStats s12_suppress_stats(void)
