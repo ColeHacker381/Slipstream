@@ -143,3 +143,19 @@ Test three builds: A: S12_SUPPRESSION=0, S12_WIND_AGC_GUARD=0; B: S12_SUPPRESSIO
 **Safety:** test at modest headphone volume. Strong air blasts cause early 16-bit saturation (`ClipD/F/NS`) that neither S12 nor S11 can undo. Consider mic windscreen and physical wind shielding in parallel.
 
 This milestone is *instrumentation + optional gain guard*, not adaptive spectral suppression. There is no new FFT. GitHub code was not locally compiled or flashed by assistant; PR remains draft.
+
+## S12.6: post-speech AGC hiss-tail experiment
+
+**Reported symptom:** faint mic/background noise audible after speech ends, fading over seconds. Logged `Gain10` on later quiet intervals falls from strongly positive (~+11dB) toward 0 over multiple seconds. S10's original idle-return time constant is 2.0 seconds, matching the slow audible tail. This is a likely mechanism, **not yet proven**; S8 adaptive noise tracking and analog gain can also affect subjective noise.
+
+**Code change:** opt-in `S12_FAST_AGC_TAIL` in `Core/Src/main.c` defaults to **1** for experiment. This configures S10's existing idle transition to **0.5s only when** `speech_active == 0` and `current_gain_db > 0.0f`. Original 2.0s idle behavior for negative gain and original 30ms/400ms AGC attack/release *while speech_active* remain intact. No modifications to the S12 wind filters, S8 NS, S9 VAD, S11 limiter, codec, or DMA; `S12_WIND_AGC_GUARD` remains 0. New `Tail=1` UART field verifies mode; `Tail=0` uses the exact previous 2s idle decay. This modifies S10's idle time constant via an explicit setter; it does not add a second downstream AGC. In both modes S10 reset/configuration occurs at startup.
+
+**Validation:** 
+1. Pull and build Performance100; observe `[S12.6]`, `Tail=1`.
+2. Start in a quiet room. Say a few words at normal volume, stop abruptly, listen to the noise floor for 5–10s. Watch `Speech`, `Gain10`, `Start/End` and the background fade. Silence should return near-unity much faster than the 2s original, but speech onset and active voice should remain unchanged.
+3. Test a string of spoken words with short 100–400ms pauses to ensure no unnatural level pumping, dips, or loss of quiet syllables. If it causes pumping, consider adding a ~150–250ms post-VAD hold or a slower tail (0.75–1s); don't change S9 VAD just to fit this test.
+4. Test wind-only, speech-only, speech+wind to ensure S12.4 is unaffected by the faster positive idle release.
+5. Set `S12_FAST_AGC_TAIL 0`, rebuild and flash, repeat at same mic distance and playback level; verify `Tail=0` and slower fade. Compare with `Tail=1`.
+6. Monitor `Proc/Max/Miss/Late/DMA/Uskip` and all `ClipD/F/NS/O`, `AClip`, `Hits`. The earlier S12.5 tests occasionally showed clipping; this is not expected to be fixed by idle decay.
+
+**Don't merge PR #6** until A/B hardware listening confirms the tail is improved without damaging normal speech or group comms.
