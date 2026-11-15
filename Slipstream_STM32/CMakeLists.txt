@@ -89,6 +89,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 # No ESP32 prebuilt library is linked and no fake codec fallback is provided.
 option(S13_OPUS_BENCHMARK "Run real Opus startup benchmark before I2S DMA" OFF)
 option(S13_OPUS_LIVE_TEST "Opt-in sustained live DSP + Opus stress test (no decoded playback)" OFF)
+option(S13_OPUS_LIVE_DECODE "Also run Opus decoder in live stress test (OFF isolates TX encode cost)" ON)
 if(S13_OPUS_LIVE_TEST AND NOT S13_OPUS_BENCHMARK)
     message(FATAL_ERROR "S13_OPUS_LIVE_TEST requires S13_OPUS_BENCHMARK=ON (real library)")
 endif()
@@ -121,7 +122,8 @@ if(S13_OPUS_BENCHMARK)
     if(S13_OPUS_LIVE_TEST)
         target_sources(${CMAKE_PROJECT_NAME} PRIVATE
             ${CMAKE_SOURCE_DIR}/Core/Src/slipstream_s13_live.c)
-        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S13_OPUS_LIVE_TEST=1)
+        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE S13_OPUS_LIVE_TEST=1
+            S13_OPUS_LIVE_DECODE=$<BOOL:${S13_OPUS_LIVE_DECODE}>)
         message(WARNING "S13 LIVE stress test is enabled; may drop audio blocks. NOT production-safe.")
     endif()
     message(STATUS "S13 real Opus benchmark enabled; verify archive ABI and available SRAM")
