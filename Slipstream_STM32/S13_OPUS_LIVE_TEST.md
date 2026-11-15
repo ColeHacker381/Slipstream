@@ -49,3 +49,17 @@ The tasks share the Performance100 firmware build directory; always run the full
 Record the first ~15 seconds of logs under continuous normal speech. Compare `P,E,D,Qdrop,MaxRun,Enc,Dec,Miss,Late,B/S/I,Stop,Reason`. The difference between modes is CPU spent decoding and its uninterrupted scheduling span—not a pure increase in CPU clock or a production-grade scheduler.
 
 If the TX-only test is clean but combined fails, the next experiment is a high-priority DSP worker with lower-priority preemptible codec work, subject to careful buffer ownership and stack capacity audits. If TX-only also fails, optimize codec or DSP workload before adding an RTOS.
+
+## S13 DMA timing diagnostic (live stress mode)
+
+A new timestamp diagnostic is automatically active in both S13 live stress modes, without changing the current strict DSP reject policy. It uses DWT cycle timestamps in each audio DMA half/full callback and records age of an RX half at entry to and exit from the DSP process call.
+
+Appended `[S13LIVE]` fields:
+- `DMAAGE=start_max/end_max us`: largest observed elapsed time from that half's DMA completion callback to entering/leaving the DSP processing routine.
+- `Over=start_count/end_count`: number of calls where the respective measured age was at least 10ms (the estimated time until the *other* DMA half callback, which begins DMA reuse of the previous half).
+- `IRQcross=opposite/same`: observed DSP processing spans during which a callback completed for a different half (the next reuse boundary) or the same half (a full buffer cycle late). These are diagnostics; the callback timing is distinct from a hardware DMA transfer's precise first memory write.
+- `RejectAge=start/end us` and `IRQhalf`: ages at the most recent strict DSP rejection and most recently signaled half number (0/1).
+
+For the next test: run **STM32: Build and Flash S13 Live TX-Only C0** as before, speak during the test, and send the first log with `Stop=1`. If `Late=1 B/S/I=0/0/1` accompanies `RejectAge end >= 10000us` and `IRQcross opposite`, the RX half was at or beyond its nominal DMA reuse boundary. `Miss=0` only means the main loop did not skip a ready-counter generation; it does not prove a safe RX snapshot. Do NOT turn off the interrupt-boundary rejection merely to make a benchmark pass.
+
+This is instrumentation of callback-to-DSP service latency, **not** an end-to-end audio latency guarantee or proof of exact write ownership; DMA completion callback jitter and actual DMA write timing can differ. A full scheduler redesign should keep the initial RX copy short and prioritize DSP before codec work.
