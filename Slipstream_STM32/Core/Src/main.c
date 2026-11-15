@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include "arm_math.h"
 #include "slipstream_s8.h"
+#include "slipstream_s9.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -89,6 +90,7 @@ static void MX_I2S2_Init(void);
  */
 #define S7_MODE 2
 #define S8_ENABLED 1 /* 0 = S7 bypass, 1 = ESP32 S8 noise suppressor */
+#define S9_ENABLED 1 /* 0 = VAD bypass, 1 = classify cleaned audio; never gate playback */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -148,6 +150,13 @@ static uint32_t s8_uart_skipped = 0U;
 
 /* The UART HAL uses this buffer until interrupt-driven TX completes. */
 static uint8_t s8_uart_report[400];
+#if S9_ENABLED && S7_MODE == 2
+static uint32_t s9_last_cycles = 0U;
+static uint32_t s9_max_cycles = 0U;
+static uint32_t s9_speech_starts = 0U;
+static uint32_t s9_speech_ends = 0U;
+static S9_VadResult s9_last_result = {0};
+#endif
 
 
 /* -----------------------------------------
@@ -539,6 +548,17 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     ns_peak = voice_peak; /* By design: NS bypassed. */
 #endif
 
+#if S9_ENABLED && S7_MODE == 2
+    /* ESP32 H9 VAD: cleaned pre-AGC PCM; classification only, never mute. */
+    uint32_t vad_start = DWT->CYCCNT;
+    s9_last_result = s9_process_block(s7_voice_16k, S7_VOICE_SAMPLES);
+    uint32_t vad_elapsed = DWT->CYCCNT - vad_start;
+    s9_last_cycles = vad_elapsed;
+    if (vad_elapsed > s9_max_cycles) s9_max_cycles = vad_elapsed;
+    s9_speech_starts += s9_last_result.speech_started;
+    s9_speech_ends += s9_last_result.speech_ended;
+#endif
+
     /*
      * Match ESP32's 16-bit voice input into
      * the interpolation stage.
@@ -739,6 +759,10 @@ int main(void)
   }
 #endif
 
+#if S9_ENABLED && S7_MODE == 2
+  s9_reset();
+#endif
+
   /* Initialize ARM CMSIS-DSP filters */
   if (!s7_resampler_init())
   {
@@ -924,6 +948,23 @@ int main(void)
          * C=IRQ during output memcpy (observational, not a TX
          * buffer-ownership guarantee).
          */
+        uint32_t vad_us = 0U, vad_max_us = 0U;
+        uint32_t vad_ready = 0U, vad_speech = 0U;
+        uint32_t vad_starts = 0U, vad_ends = 0U;
+        int32_t vad_level_tenths = -1200, vad_noise_tenths = -1200;
+#if S9_ENABLED && S7_MODE == 2
+        if (SystemCoreClock != 0U)
+        {
+            vad_us = (uint32_t)((uint64_t)s9_last_cycles * 1000000ULL / SystemCoreClock);
+            vad_max_us = (uint32_t)((uint64_t)s9_max_cycles * 1000000ULL / SystemCoreClock);
+        }
+        vad_ready = s9_last_result.noise_estimate_ready;
+        vad_speech = s9_last_result.speech_active;
+        vad_starts = s9_speech_starts;
+        vad_ends = s9_speech_ends;
+        vad_level_tenths = (int32_t)(s9_last_result.level_dbfs * 10.0f);
+        vad_noise_tenths = (int32_t)(s9_last_result.noise_dbfs * 10.0f);
+#endif
         if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
         {
             int len = snprintf(
@@ -934,7 +975,9 @@ int main(void)
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
                 "Miss=%lu Late=%lu B/S/I=%lu/%lu/%lu C=%lu "
-                "DMA=%lu Uskip=%lu\r\n",
+                "DMA=%lu Uskip=%lu "
+                "VAD=%lu/%lu VReady=%lu Speech=%lu "
+                "Lvl10=%ld Noise10=%ld Start=%lu End=%lu\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -958,7 +1001,15 @@ int main(void)
                 (unsigned long)s8_reject_irq,
                 (unsigned long)s8_commit_irq,
                 (unsigned long)s5_dma_errors,
-                (unsigned long)s8_uart_skipped
+                (unsigned long)s8_uart_skipped,
+                (unsigned long)vad_us,
+                (unsigned long)vad_max_us,
+                (unsigned long)vad_ready,
+                (unsigned long)vad_speech,
+                (long)vad_level_tenths,
+                (long)vad_noise_tenths,
+                (unsigned long)vad_starts,
+                (unsigned long)vad_ends
             );
             if (len > 0)
             {
@@ -981,6 +1032,9 @@ int main(void)
         s8_filter_clip = 0;
         s8_output_clip = 0;
         s7_max_cycles = 0;
+#if S9_ENABLED && S7_MODE == 2
+        s9_max_cycles = 0U;
+#endif
 #if S8_ENABLED
         s8_max_cycles = 0;
 #endif
