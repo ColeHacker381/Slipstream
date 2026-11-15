@@ -64,3 +64,25 @@ Acceptance for first stage: builds, no new `Late/Miss/DMA/Uskip` errors, small a
 First ~95 one-second reports showed `Proc` mostly 5.95–6.78 ms, maximum 6.86 ms, versus S11 maximum ~5.16 ms. All reported `Late/Miss/DMA/Uskip` remained 0. Measurement overhead was too high for production. Also `WRatio/WMax` often reached 100% while raw microphone RMS was only ~1–5 units: a very low-level IIR filter tail, not usable wind evidence.
 
 S12.1 converts the diagnostic 480-sample accumulation from emulated `double` to hardware-supported `float` and sets reported ratio to 0 when raw RMS is below 25 PCM units. This **does not alter the signal path or the wind-candidate thresholds**, and remains an experimental detector. Rerun Performance100 and compare `Proc/Max` with the earlier 6.86 ms maximum. Inspect `WRMS`, `WRatio`, `WBlocks`, `GStep10` during the same conditions, and pay particular attention to artifacts when S10 gain is +10 to +18 dB. The first logs demonstrated up to +17.9 dB gain and occasional `AClip=5`, but the one-second summary cannot establish which event caused an audible pop. Measure any S10-enabled versus disabled difference with the same mic movement.
+
+## S12.2 spectral baseline from labeled speech vs wind (still read-only)
+
+The user provided three blowing-only bursts and then quiet/normal/loud speech. The old 20–200 Hz / total RMS ratio **overlaps**:
+- Wind-only strong intervals: typically 22–49%.
+- Speech intervals: roughly 5–64% (often 28–56%).
+- The original 60% threshold misses most wind-only bursts; simply lowering it would misclassify many speech frames.
+
+S12.2 adds **approximate** subbands from first-order lowpass differences at 20, 80, 200, and 1000 Hz: 20–80 Hz and 200–1000 Hz. These are not sharp FFT bins or calibrated wind classifiers. A 1-second summary of **active blocks** (raw microphone RMS >=250 PCM units) is added to avoid comparing the last silent block to a wind burst that occurred earlier in the second.
+
+New fields:
+- `WAct`: number of active 10ms raw microphone frames (threshold 250)
+- `WSp`: those active frames for which post-S8/S9 VAD reports speech; **wind false positives count here**
+- `WRawMax`: max raw RMS among active 10ms frames
+- `WLo`: mean 20–80 Hz approximate-band RMS among active frames
+- `WMid`: mean 200–1000 Hz approximate-band RMS among active frames
+- `WRAvg`: arithmetic mean of 20–200 Hz / raw RMS ratio (%) among active frames
+Existing `WRMS`/`WRatio` remain **last-block snapshots**, not one-second means.
+
+No PCM change, no VAD/AGC change, no adaptive suppression and no new wind decision threshold. This is an engineering investigation and **must stay draft**.
+
+**Test:** build and flash Performance100; log separated 10-second groups for quiet no speech, quiet voice, normal voice, loud voice, 3× wind-only bursts, and speech+wind. Label start/end or provide log sections. Watch CPU `Proc/Max` (pre-S12.2 max ~5.28ms) and `Late/Miss/DMA/Uskip` (must stay zero). Compare `WLo/WMid` and `WSp/WAct` across matched groups rather than accepting a class decision from the old ratio. Do not build suppressor logic until the features distinguish conditions, especially **speech+wind**.
