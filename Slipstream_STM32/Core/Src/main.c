@@ -934,7 +934,7 @@ int main(void)
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
                 "Miss=%lu Late=%lu B/S/I=%lu/%lu/%lu C=%lu "
-                "DMA=%lu Uskip=%lu\\r\\n",
+                "DMA=%lu Uskip=%lu\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
