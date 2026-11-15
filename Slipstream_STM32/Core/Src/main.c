@@ -27,6 +27,7 @@
 #include "slipstream_s8.h"
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
+#include "slipstream_s11.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -93,6 +94,7 @@ static void MX_I2S2_Init(void);
 #define S8_ENABLED 1 /* 0 = S7 bypass, 1 = ESP32 S8 noise suppressor */
 #define S9_ENABLED 1 /* 0 = VAD bypass, 1 = classify cleaned audio; never gate playback */
 #define S10_ENABLED 1 /* 0 = S9 baseline, 1 = VAD-aware ESP32 AGC */
+#define S11_ENABLED 1 /* 0 = S10 bypass, 1 = original ESP32 H11 lookahead limiter */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -151,7 +153,7 @@ static uint32_t s8_max_committed_cycles = 0U;
 static uint32_t s8_uart_skipped = 0U;
 
 /* The UART HAL uses this buffer until interrupt-driven TX completes. */
-static uint8_t s8_uart_report[512]; /* S10 extends diagnostics beyond S9 */
+static uint8_t s8_uart_report[640]; /* S10 extends diagnostics beyond S9 */
 #if S9_ENABLED && S7_MODE == 2
 static uint32_t s9_last_cycles = 0U;
 static uint32_t s9_max_cycles = 0U;
@@ -166,6 +168,16 @@ static uint32_t s10_last_cycles = 0U;
 static uint32_t s10_max_cycles = 0U;
 static uint32_t s10_clip_count = 0U;
 static S10_AgcResult s10_last_result = {0};
+#endif
+
+#if S11_ENABLED && S7_MODE == 2
+static int16_t s11_output_16k[S7_VOICE_SAMPLES];
+static S11_LimiterResult s11_last_result = {0};
+static uint32_t s11_last_cycles = 0U;
+static uint32_t s11_max_cycles = 0U;
+static uint32_t s11_hits_total = 0U;
+static uint32_t s11_clamps_total = 0U;
+static uint32_t s11_post_peak = 0U;
 #endif
 
 
@@ -587,6 +599,25 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     memcpy(s7_voice_16k, s10_output_16k, sizeof(s7_voice_16k));
 #endif
 
+#if S11_ENABLED && S7_MODE == 2
+    /* Original ESP32 H11: limit AGC output before the upsampling FIR. */
+    uint32_t lim_start = DWT->CYCCNT;
+    s11_last_result = s11_process_block(
+        s7_voice_16k, s11_output_16k, S7_VOICE_SAMPLES
+    );
+    uint32_t lim_elapsed = DWT->CYCCNT - lim_start;
+    s11_last_cycles = lim_elapsed;
+    if (lim_elapsed > s11_max_cycles) s11_max_cycles = lim_elapsed;
+    s11_hits_total += s11_last_result.threshold_hits;
+    s11_clamps_total += s11_last_result.safety_clamps;
+    for (uint32_t i = 0U; i < S7_VOICE_SAMPLES; ++i)
+    {
+        uint32_t mag = s7_abs_pcm(s11_output_16k[i]);
+        if (mag > s11_post_peak) s11_post_peak = mag;
+    }
+    memcpy(s7_voice_16k, s11_output_16k, sizeof(s7_voice_16k));
+#endif
+
     /*
      * Match ESP32's 16-bit voice input into
      * the interpolation stage.
@@ -793,6 +824,10 @@ int main(void)
 
 #if S10_ENABLED && S7_MODE == 2
   s10_reset();
+#endif
+
+#if S11_ENABLED && S7_MODE == 2
+  s11_reset();
 #endif
 
   /* Initialize ARM CMSIS-DSP filters */
@@ -1012,12 +1047,30 @@ int main(void)
         agc_out_tenths = (int32_t)(s10_last_result.output_dbfs * 10.0f);
         agc_clips = s10_clip_count;
 #endif
+        uint32_t limiter_us = 0U, limiter_max_us = 0U;
+        int32_t limiter_in_tenths = -1200, limiter_out_tenths = -1200;
+        int32_t limiter_reduction_tenths = 0;
+        uint32_t limiter_hits = 0U, limiter_clamps = 0U;
+        uint32_t limiter_post_peak = 0U;
+#if S11_ENABLED && S7_MODE == 2
+        if (SystemCoreClock != 0U)
+        {
+            limiter_us = (uint32_t)((uint64_t)s11_last_cycles * 1000000ULL / SystemCoreClock);
+            limiter_max_us = (uint32_t)((uint64_t)s11_max_cycles * 1000000ULL / SystemCoreClock);
+        }
+        limiter_in_tenths = (int32_t)(s11_last_result.input_peak_dbfs * 10.0f);
+        limiter_out_tenths = (int32_t)(s11_last_result.output_peak_dbfs * 10.0f);
+        limiter_reduction_tenths = (int32_t)(s11_last_result.gain_reduction_db * 10.0f);
+        limiter_hits = s11_hits_total;
+        limiter_clamps = s11_clamps_total;
+        limiter_post_peak = s11_post_peak;
+#endif
         if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
         {
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S10] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S11] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
@@ -1025,7 +1078,9 @@ int main(void)
                 "DMA=%lu Uskip=%lu "
                 "VAD=%lu/%lu VReady=%lu Speech=%lu "
                 "Lvl10=%ld Noise10=%ld Start=%lu End=%lu "
-                "AGC=%lu/%lu Gain10=%ld Ain10=%ld Aout10=%ld AClip=%lu\r\n",
+                "AGC=%lu/%lu Gain10=%ld Ain10=%ld Aout10=%ld AClip=%lu "
+                "LIM=%lu/%lu Lin10=%ld Lout10=%ld GR10=%ld "
+                "Hits=%lu Clamp=%lu LPeak=%lu\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1063,7 +1118,15 @@ int main(void)
                 (long)agc_gain_tenths,
                 (long)agc_in_tenths,
                 (long)agc_out_tenths,
-                (unsigned long)agc_clips
+                (unsigned long)agc_clips,
+                (unsigned long)limiter_us,
+                (unsigned long)limiter_max_us,
+                (long)limiter_in_tenths,
+                (long)limiter_out_tenths,
+                (long)limiter_reduction_tenths,
+                (unsigned long)limiter_hits,
+                (unsigned long)limiter_clamps,
+                (unsigned long)limiter_post_peak
             );
             if (len > 0)
             {
@@ -1092,6 +1155,12 @@ int main(void)
 #if S10_ENABLED && S7_MODE == 2
         s10_max_cycles = 0U;
         s10_clip_count = 0U;
+#endif
+#if S11_ENABLED && S7_MODE == 2
+        s11_max_cycles = 0U;
+        s11_hits_total = 0U;
+        s11_clamps_total = 0U;
+        s11_post_peak = 0U;
 #endif
 #if S8_ENABLED
         s8_max_cycles = 0;
