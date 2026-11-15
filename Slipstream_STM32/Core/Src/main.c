@@ -877,9 +877,9 @@ int main(void)
       int ok = s13_opus_benchmark(&bench);
       char msg[256];
       int n = snprintf(msg, sizeof(msg),
-          "[S13] OpusBench ok=%d frames=%lu err=%lu Enc=%lu/%luus "
+          "[S13] OpusBench C=%d ok=%d frames=%lu err=%lu Enc=%lu/%luus "
           "Dec=%lu/%luus Total=%lu/%luus AvgBytes=%lu RAMenc=%lu RAMdec=%lu\r\n",
-          ok, (unsigned long)bench.frames, (unsigned long)bench.errors,
+          S13_OPUS_COMPLEXITY, ok, (unsigned long)bench.frames, (unsigned long)bench.errors,
           (unsigned long)bench.encode_avg_us, (unsigned long)bench.encode_max_us,
           (unsigned long)bench.decode_avg_us, (unsigned long)bench.decode_max_us,
           (unsigned long)bench.total_avg_us, (unsigned long)bench.total_max_us,
