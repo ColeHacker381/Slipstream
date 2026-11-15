@@ -110,7 +110,7 @@ if(S13_OPUS_BENCHMARK)
     # GNU ld resolves static archives left-to-right. CubeMX already links -lm
     # before this external archive, so repeat m AFTER libopus.a to resolve
     # floor/log and other math functions referenced only by Opus.
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+    target_link_libraries(${CMAKE_PROJECT_NAME}
         "${S13_OPUS_LIBRARY}"
         m
     )
