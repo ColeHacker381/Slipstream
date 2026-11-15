@@ -100,6 +100,7 @@ static void MX_I2S2_Init(void);
 #define S12_SUPPRESSION 1 /* 0 = exact S12.2 audio bypass */
 #define S12_MID_SUPPRESSION 1 /* 0 = S12.3 low-only; 1 = S12.4 experimental 220-1400 Hz band */
 #define S12_WIND_AGC_GUARD 0 /* S12.5: set 1 to test positive-gain compensation; 0=original AGC */
+#define S12_FAST_AGC_TAIL 1 /* S12.6: 0 = original 2s idle, 1 = 0.5s for positive gain */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -921,6 +922,7 @@ int main(void)
 
 #if S10_ENABLED && S7_MODE == 2
   s10_reset();
+  s10_set_fast_positive_idle(S12_FAST_AGC_TAIL);
 #endif
 
 #if S11_ENABLED && S7_MODE == 2
@@ -1218,7 +1220,7 @@ int main(void)
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S12.5] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S12.6] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
@@ -1232,7 +1234,7 @@ int main(void)
                 "WRMS=%lu WBand=%lu WRatio=%lu WMax=%lu WBlocks=%lu GStep10=%ld "
                 "WAct=%lu WSp=%lu WRawMax=%lu WLo=%lu WMid=%lu WRAvg=%lu "
                 "WState=%lu WBlend=%lu WMidMix=%lu SUP=%lu/%lu "
-                "WL=%lu Pre=%lu Post=%lu AGCR=%lu GuardR=%lu Boost=%lu Guard10=%lu\r\n",
+                "WL=%lu Pre=%lu Post=%lu AGCR=%lu GuardR=%lu Boost=%lu Guard10=%lu Tail=%u\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1302,7 +1304,8 @@ int main(void)
                 (unsigned long)agc_rms_mean,
                 (unsigned long)guard_rms_mean,
                 (unsigned long)agc_boost_count,
-                (unsigned long)guard_db10
+                (unsigned long)guard_db10,
+                (unsigned)s10_fast_positive_idle_enabled()
             );
             if (len > 0)
             {
