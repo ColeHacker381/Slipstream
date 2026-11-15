@@ -26,6 +26,7 @@
 #include "arm_math.h"
 #include "slipstream_s8.h"
 #include "slipstream_s9.h"
+#include "slipstream_s10.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -91,6 +92,7 @@ static void MX_I2S2_Init(void);
 #define S7_MODE 2
 #define S8_ENABLED 1 /* 0 = S7 bypass, 1 = ESP32 S8 noise suppressor */
 #define S9_ENABLED 1 /* 0 = VAD bypass, 1 = classify cleaned audio; never gate playback */
+#define S10_ENABLED 1 /* 0 = S9 baseline, 1 = VAD-aware ESP32 AGC */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -149,13 +151,21 @@ static uint32_t s8_max_committed_cycles = 0U;
 static uint32_t s8_uart_skipped = 0U;
 
 /* The UART HAL uses this buffer until interrupt-driven TX completes. */
-static uint8_t s8_uart_report[400];
+static uint8_t s8_uart_report[512]; /* S10 extends diagnostics beyond S9 */
 #if S9_ENABLED && S7_MODE == 2
 static uint32_t s9_last_cycles = 0U;
 static uint32_t s9_max_cycles = 0U;
 static uint32_t s9_speech_starts = 0U;
 static uint32_t s9_speech_ends = 0U;
 static S9_VadResult s9_last_result = {0};
+#endif
+
+#if S10_ENABLED && S7_MODE == 2
+static int16_t s10_output_16k[S7_VOICE_SAMPLES];
+static uint32_t s10_last_cycles = 0U;
+static uint32_t s10_max_cycles = 0U;
+static uint32_t s10_clip_count = 0U;
+static S10_AgcResult s10_last_result = {0};
 #endif
 
 
@@ -559,6 +569,24 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     s9_speech_ends += s9_last_result.speech_ended;
 #endif
 
+#if S10_ENABLED && S7_MODE == 2
+    /* H10: post-NS/post-VAD, before the H11 limiter and interpolation.
+       Observe the original VAD state, and do not apply a limiter early. */
+    uint8_t agc_speech = 0U;
+#if S9_ENABLED
+    agc_speech = s9_last_result.speech_active;
+#endif
+    uint32_t agc_start = DWT->CYCCNT;
+    s10_last_result = s10_process_block(
+        s7_voice_16k, s10_output_16k, S7_VOICE_SAMPLES, agc_speech
+    );
+    uint32_t agc_elapsed = DWT->CYCCNT - agc_start;
+    s10_last_cycles = agc_elapsed;
+    if (agc_elapsed > s10_max_cycles) s10_max_cycles = agc_elapsed;
+    s10_clip_count += s10_last_result.clipped_samples;
+    memcpy(s7_voice_16k, s10_output_16k, sizeof(s7_voice_16k));
+#endif
+
     /*
      * Match ESP32's 16-bit voice input into
      * the interpolation stage.
@@ -763,6 +791,10 @@ int main(void)
   s9_reset();
 #endif
 
+#if S10_ENABLED && S7_MODE == 2
+  s10_reset();
+#endif
+
   /* Initialize ARM CMSIS-DSP filters */
   if (!s7_resampler_init())
   {
@@ -965,19 +997,35 @@ int main(void)
         vad_level_tenths = (int32_t)(s9_last_result.level_dbfs * 10.0f);
         vad_noise_tenths = (int32_t)(s9_last_result.noise_dbfs * 10.0f);
 #endif
+        uint32_t agc_us = 0U, agc_max_us = 0U;
+        int32_t agc_gain_tenths = 0;
+        int32_t agc_in_tenths = -1200, agc_out_tenths = -1200;
+        uint32_t agc_clips = 0U;
+#if S10_ENABLED && S7_MODE == 2
+        if (SystemCoreClock != 0U)
+        {
+            agc_us = (uint32_t)((uint64_t)s10_last_cycles * 1000000ULL / SystemCoreClock);
+            agc_max_us = (uint32_t)((uint64_t)s10_max_cycles * 1000000ULL / SystemCoreClock);
+        }
+        agc_gain_tenths = (int32_t)(s10_last_result.applied_gain_db * 10.0f);
+        agc_in_tenths = (int32_t)(s10_last_result.input_dbfs * 10.0f);
+        agc_out_tenths = (int32_t)(s10_last_result.output_dbfs * 10.0f);
+        agc_clips = s10_clip_count;
+#endif
         if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
         {
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S8.1] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S10] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
                 "Miss=%lu Late=%lu B/S/I=%lu/%lu/%lu C=%lu "
                 "DMA=%lu Uskip=%lu "
                 "VAD=%lu/%lu VReady=%lu Speech=%lu "
-                "Lvl10=%ld Noise10=%ld Start=%lu End=%lu\r\n",
+                "Lvl10=%ld Noise10=%ld Start=%lu End=%lu "
+                "AGC=%lu/%lu Gain10=%ld Ain10=%ld Aout10=%ld AClip=%lu\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1009,7 +1057,13 @@ int main(void)
                 (long)vad_level_tenths,
                 (long)vad_noise_tenths,
                 (unsigned long)vad_starts,
-                (unsigned long)vad_ends
+                (unsigned long)vad_ends,
+                (unsigned long)agc_us,
+                (unsigned long)agc_max_us,
+                (long)agc_gain_tenths,
+                (long)agc_in_tenths,
+                (long)agc_out_tenths,
+                (unsigned long)agc_clips
             );
             if (len > 0)
             {
@@ -1034,6 +1088,10 @@ int main(void)
         s7_max_cycles = 0;
 #if S9_ENABLED && S7_MODE == 2
         s9_max_cycles = 0U;
+#endif
+#if S10_ENABLED && S7_MODE == 2
+        s10_max_cycles = 0U;
+        s10_clip_count = 0U;
 #endif
 #if S8_ENABLED
         s8_max_cycles = 0;
