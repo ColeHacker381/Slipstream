@@ -28,6 +28,7 @@
 #include "slipstream_s9.h"
 #include "slipstream_s10.h"
 #include "slipstream_s11.h"
+#include "slipstream_s12.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -95,6 +96,7 @@ static void MX_I2S2_Init(void);
 #define S9_ENABLED 1 /* 0 = VAD bypass, 1 = classify cleaned audio; never gate playback */
 #define S10_ENABLED 1 /* 0 = S9 baseline, 1 = VAD-aware ESP32 AGC */
 #define S11_ENABLED 1 /* 0 = S10 bypass, 1 = original ESP32 H11 lookahead limiter */
+#define S12_DIAGNOSTICS 1 /* Read-only wind and AGC motion diagnostics; NO PCM changes */
 
 #define WM8960_ADDR (0x1A << 1)
 
@@ -153,7 +155,7 @@ static uint32_t s8_max_committed_cycles = 0U;
 static uint32_t s8_uart_skipped = 0U;
 
 /* The UART HAL uses this buffer until interrupt-driven TX completes. */
-static uint8_t s8_uart_report[640]; /* S10 extends diagnostics beyond S9 */
+static uint8_t s8_uart_report[768]; /* S10 extends diagnostics beyond S9 */
 #if S9_ENABLED && S7_MODE == 2
 static uint32_t s9_last_cycles = 0U;
 static uint32_t s9_max_cycles = 0U;
@@ -178,6 +180,13 @@ static uint32_t s11_max_cycles = 0U;
 static uint32_t s11_hits_total = 0U;
 static uint32_t s11_clamps_total = 0U;
 static uint32_t s11_post_peak = 0U;
+#endif
+#if S12_DIAGNOSTICS && S7_MODE == 2
+static S12_WindResult s12_last_wind = {0};
+static uint32_t s12_wind_blocks = 0U;
+static uint32_t s12_max_ratio = 0U;
+static int32_t s12_max_gain_step10 = 0;
+static float s12_previous_gain = 0.0f;
 #endif
 
 
@@ -486,6 +495,13 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
         if (magnitude > input_peak)
             input_peak = magnitude;
     }
+#if S12_DIAGNOSTICS && S7_MODE == 2
+    /* Before 100 Hz HPF: preserves wind and handling rumble information. */
+    s12_last_wind = s12_analyze_raw_48k(s7_input_48k, S5_FRAMES_PER_HALF);
+    s12_wind_blocks += s12_last_wind.wind_candidate;
+    if (s12_last_wind.low_ratio_pct > s12_max_ratio)
+        s12_max_ratio = s12_last_wind.low_ratio_pct;
+#endif
 
 #if S7_MODE == 0
 
@@ -596,6 +612,14 @@ static int s7_process_half(uint32_t half, uint32_t sequence)
     s10_last_cycles = agc_elapsed;
     if (agc_elapsed > s10_max_cycles) s10_max_cycles = agc_elapsed;
     s10_clip_count += s10_last_result.clipped_samples;
+#if S12_DIAGNOSTICS
+    /* Absolute gain step per 10 ms block; observational only. */
+    float dg = s10_last_result.applied_gain_db - s12_previous_gain;
+    if (dg < 0.0f) dg = -dg;
+    int32_t dg10 = (int32_t)(dg * 10.0f);
+    if (dg10 > s12_max_gain_step10) s12_max_gain_step10 = dg10;
+    s12_previous_gain = s10_last_result.applied_gain_db;
+#endif
     memcpy(s7_voice_16k, s10_output_16k, sizeof(s7_voice_16k));
 #endif
 
@@ -828,6 +852,11 @@ int main(void)
 
 #if S11_ENABLED && S7_MODE == 2
   s11_reset();
+#endif
+
+#if S12_DIAGNOSTICS && S7_MODE == 2
+  s12_reset();
+  s12_previous_gain = 0.0f;
 #endif
 
   /* Initialize ARM CMSIS-DSP filters */
@@ -1065,12 +1094,23 @@ int main(void)
         limiter_clamps = s11_clamps_total;
         limiter_post_peak = s11_post_peak;
 #endif
+        uint32_t wind_raw = 0U, wind_band = 0U, wind_ratio = 0U;
+        uint32_t wind_blocks = 0U, wind_max_ratio = 0U;
+        int32_t gain_step10 = 0;
+#if S12_DIAGNOSTICS && S7_MODE == 2
+        wind_raw = s12_last_wind.raw_rms;
+        wind_band = s12_last_wind.wind_band_rms;
+        wind_ratio = s12_last_wind.low_ratio_pct;
+        wind_blocks = s12_wind_blocks;
+        wind_max_ratio = s12_max_ratio;
+        gain_step10 = s12_max_gain_step10;
+#endif
         if (HAL_UART_GetState(&huart3) == HAL_UART_STATE_READY)
         {
             int len = snprintf(
                 (char *)s8_uart_report,
                 sizeof(s8_uart_report),
-                "[S11] En=%u IRQ/s=%lu Voice/s=%lu "
+                "[S12.0] En=%u IRQ/s=%lu Voice/s=%lu "
                 "Mic=%lu Voice=%lu NSpeak=%lu Out=%lu "
                 "ClipD/F/NS/O=%lu/%lu/%lu/%lu "
                 "Proc=%lu Max=%lu NS=%lu NSMax=%lu Ready=%lu "
@@ -1080,7 +1120,8 @@ int main(void)
                 "Lvl10=%ld Noise10=%ld Start=%lu End=%lu "
                 "AGC=%lu/%lu Gain10=%ld Ain10=%ld Aout10=%ld AClip=%lu "
                 "LIM=%lu/%lu Lin10=%ld Lout10=%ld GR10=%ld "
-                "Hits=%lu Clamp=%lu LPeak=%lu\r\n",
+                "Hits=%lu Clamp=%lu LPeak=%lu "
+                "WRMS=%lu WBand=%lu WRatio=%lu WMax=%lu WBlocks=%lu GStep10=%ld\r\n",
                 (unsigned)S8_ENABLED,
                 (unsigned long)irqs_per_second,
                 (unsigned long)voice_per_second,
@@ -1126,7 +1167,13 @@ int main(void)
                 (long)limiter_reduction_tenths,
                 (unsigned long)limiter_hits,
                 (unsigned long)limiter_clamps,
-                (unsigned long)limiter_post_peak
+                (unsigned long)limiter_post_peak,
+                (unsigned long)wind_raw,
+                (unsigned long)wind_band,
+                (unsigned long)wind_ratio,
+                (unsigned long)wind_max_ratio,
+                (unsigned long)wind_blocks,
+                (long)gain_step10
             );
             if (len > 0)
             {
@@ -1141,6 +1188,11 @@ int main(void)
         }
         else s8_uart_skipped++;
 
+#if S12_DIAGNOSTICS && S7_MODE == 2
+        s12_wind_blocks = 0U;
+        s12_max_ratio = 0U;
+        s12_max_gain_step10 = 0;
+#endif
         s7_input_peak = 0;
         s7_output_peak = 0;
         s8_voice_peak = 0;
