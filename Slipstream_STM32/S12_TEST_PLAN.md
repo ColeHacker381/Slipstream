@@ -58,3 +58,9 @@ Acceptance for first stage: builds, no new `Late/Miss/DMA/Uskip` errors, small a
 - S12.1: calibrate wind detection with fan/no-wind and helmet-mounted ride recordings; smooth the state with time hysteresis. Consider effects of low-frequency speech and contact handling separately.
 - S12.2: use conservative, frequency-selective wind gain suppression and/or adaptive noise estimation **while preserving speech during riding**. Never auto-mute the mic based solely on wind flags.
 - Evaluate whether S10 needs an optional independent noise-floor gate, gain rise hold, or attack/release change, but keep the original S10 bypass and A/B benchmark.
+
+## S12.1 diagnostic performance correction (following first hardware log)
+
+First ~95 one-second reports showed `Proc` mostly 5.95–6.78 ms, maximum 6.86 ms, versus S11 maximum ~5.16 ms. All reported `Late/Miss/DMA/Uskip` remained 0. Measurement overhead was too high for production. Also `WRatio/WMax` often reached 100% while raw microphone RMS was only ~1–5 units: a very low-level IIR filter tail, not usable wind evidence.
+
+S12.1 converts the diagnostic 480-sample accumulation from emulated `double` to hardware-supported `float` and sets reported ratio to 0 when raw RMS is below 25 PCM units. This **does not alter the signal path or the wind-candidate thresholds**, and remains an experimental detector. Rerun Performance100 and compare `Proc/Max` with the earlier 6.86 ms maximum. Inspect `WRMS`, `WRatio`, `WBlocks`, `GStep10` during the same conditions, and pay particular attention to artifacts when S10 gain is +10 to +18 dB. The first logs demonstrated up to +17.9 dB gain and occasional `AClip=5`, but the one-second summary cannot establish which event caused an audible pop. Measure any S10-enabled versus disabled difference with the same mic movement.
