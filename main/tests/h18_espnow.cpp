@@ -33,7 +33,7 @@ constexpr const char *TAG =
  */
 
 constexpr bool IS_TRANSMITTER =
-    false;
+    true;
 
 
 /*

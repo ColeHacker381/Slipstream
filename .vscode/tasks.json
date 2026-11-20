@@ -1,0 +1,83 @@
+
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "espPort",
+      "type": "promptString",
+      "description": "ESP32 serial port",
+      "default": "/dev/ttyUSB0"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "ESP-IDF: Build",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "source \"$HOME/.espressif/v6.1/esp-idf/export.sh\" && idf.py build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF: Flash",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "source \"$HOME/.espressif/v6.1/esp-idf/export.sh\" && idf.py -p '${input:espPort}' flash"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF: Monitor",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "source \"$HOME/.espressif/v6.1/esp-idf/export.sh\" && idf.py -p '${input:espPort}' monitor"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF: Build Flash Monitor",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "source \"$HOME/.espressif/v6.1/esp-idf/export.sh\" && idf.py -p '${input:espPort}' build flash monitor"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF: Menuconfig",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "source \"$HOME/.espressif/v6.1/esp-idf/export.sh\" && idf.py menuconfig"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
