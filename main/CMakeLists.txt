@@ -12,6 +12,7 @@ idf_component_register(
         "audio/audio_processor.cpp"
         "audio/priority_mixer.cpp"
         "audio/rx_output_stage.cpp"
+        "audio/phone_audio.cpp"
 
         # DSP
         "dsp/biquad.cpp"
@@ -28,7 +29,7 @@ idf_component_register(
         "transport/jitter_buffer.cpp"
         "transport/espnow_transport.cpp"
 
-        # New D1.5 test
+        # Tests
         "tests/d1_5_rf_pipeline.cpp"
         "tests/d1_6_espnow_duplex.cpp"
 

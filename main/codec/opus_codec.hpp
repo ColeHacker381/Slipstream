@@ -18,7 +18,7 @@ public:
     static constexpr int CHANNELS = 1;
     static constexpr int FRAME_SAMPLES = 320;
     static constexpr int BITRATE = 20000;
-    static constexpr int COMPLEXITY = 4; // D1.7: reduced from 5
+    static constexpr int COMPLEXITY = 0; // D1.7: reduced from 5
     static constexpr size_t MAX_PACKET_BYTES = 512;
 
     OpusCodec() = default;
